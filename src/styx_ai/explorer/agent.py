@@ -123,8 +123,10 @@ shell redirects, etc. Filter to files relevant to this tool.
 2. For each write call, trace the filename construction:
    - What path/filename string is passed to the write function?
    - Is it a complete filename or does the write function add extensions?
-   - If the write function is a macro or wrapper, follow it to find out what \
-files it actually creates. Read header files and library source as needed.
+   - If the write function is a macro or wrapper, grep for its definition \
+across the entire source tree. Search without a glob filter so you find \
+definitions in headers (*.h), source files (*.c, *.cpp), and anywhere else. \
+Don't limit searches to the tool's own source file.
 3. For each write call, determine what condition controls whether it executes.
 4. If the tool delegates to sub-binaries (you can see this from the interface \
 report or by reading the source), trace into those sources too.
