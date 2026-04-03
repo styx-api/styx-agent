@@ -1,0 +1,20 @@
+# Secrets
+.env
+
+# Claude Code
+.claude/
+CLAUDE.md
+
+# Cloned source repos for exploration
+repos/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.venv/
+
+# Explorer output
+output/
