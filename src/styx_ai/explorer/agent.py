@@ -1,4 +1,9 @@
-"""Explorer agent: navigates package source code to extract CLI information."""
+"""Explorer agents: extract CLI interface and output information from source code.
+
+Two agents work in sequence:
+1. Interface agent — extracts inputs, constraints, parsing approach
+2. Output agent — traces output file generation through the source
+"""
 
 from __future__ import annotations
 
@@ -17,19 +22,21 @@ DEFAULT_MODEL = "gemini/gemini-2.5-flash"
 MAX_TURNS = 40
 
 
-SYSTEM_PROMPT = """\
-You are a source code researcher. You explore source repositories and produce \
-thorough reports on command-line tool interfaces.
+# ---------------------------------------------------------------------------
+# Interface agent
+# ---------------------------------------------------------------------------
+
+INTERFACE_PROMPT = """\
+You are a source code researcher. You explore source repositories and extract \
+command-line tool interfaces.
 
 You will be given a tool name. Locate its entry point in the repository, then \
-extract its complete interface. A tool's entry point might be a script (shell, \
-Python, etc.) or a compiled source file with a main function. If a file with the \
-tool's exact name exists, start there. A wrapper script and the binary it calls \
-are DIFFERENT tools with separate interfaces.
+extract its complete input interface. A tool's entry point might be a script \
+(shell, Python, etc.) or a compiled source file with a main function. If a file \
+with the tool's exact name exists, start there. A wrapper script and the binary \
+it calls are DIFFERENT tools with separate interfaces.
 
 ## What to extract
-
-For each tool, produce a report covering:
 
 ### Inputs
 
@@ -44,41 +51,22 @@ or unbounded list
 - **Optionality** — required or optional, with default value if any
 - **Syntax** — how the user provides it: flag (`-f`, `--flag`), positional \
 (by index), or other
-- **Constraints** — value ranges, allowed choices, mutual exclusions, \
-dependencies on other inputs
+- **Constraints** — value ranges, allowed choices, dependencies on other inputs
 - **Source snippet** — the code where this input is defined
 
-### Outputs
+### Constraints
 
-Every file or artifact the tool produces. For each one:
-
-- **Path pattern** — how the output path is constructed from inputs
-- **Condition** — which inputs control whether this output is produced
-- **Source snippet** — the actual write/save call (not guessed from conventions)
-
-If the tool delegates to sub-binaries that produce outputs, trace into their \
-source to find the actual write calls. Grep for file-writing functions \
-(`save_volume`, `save`, `write`, `fopen`, etc.) and read the surrounding code.
-
-### Delegated tools
-
-If this tool invokes other tools that produce user-visible outputs, list them \
-with how they are called. Only include tools whose outputs become part of this \
-tool's output — not internal utilities.
+Mutual exclusions and dependencies between inputs.
 
 ## Report format
 
-Use these sections in this order. Write the report directly as markdown \
-(do NOT wrap it in a code block):
+Write the report directly as markdown (do NOT wrap it in a code block):
 
 - `# <tool_name>` — tool name as heading, one-line description below
 - `## Invocation` — usage pattern
 - `## Parsing approach` — parser used, source files, confidence level
-- `## Inputs` — for each input: name, description, type, cardinality, \
-optionality, syntax, constraints, source snippet
-- `## Constraints` — mutual exclusions, dependencies between inputs \
-(omit if none)
-- `## Outputs` — for each output: path pattern, condition, source snippet
+- `## Inputs` — for each input: all fields listed above
+- `## Constraints` — mutual exclusions, dependencies (omit if none)
 - `## Source files examined` — files you read
 - `## Uncertainties` — anything you could not determine confidently
 
@@ -97,16 +85,68 @@ code here
 - Quote help text verbatim when available.
 - Read ALL of each relevant source file. Page through large files with \
 offset/limit or use read_tail.
-- Find output paths by grepping for file-writing calls in the source, then \
-reading the surrounding context. Every output in your report must have a \
-source snippet showing the actual write call.
-- When a tool delegates to sub-binaries, read those sources too to find their \
-outputs. Cover all code paths (modes, branches, conditional logic).
 - Mark uncertainties explicitly rather than guessing.
 """
 
 
-FSL_STRATEGY = """\
+# ---------------------------------------------------------------------------
+# Output agent
+# ---------------------------------------------------------------------------
+
+OUTPUT_PROMPT = """\
+You are a source code researcher. You trace output file generation in source \
+repositories.
+
+You will be given a tool name and an interface report from a previous analysis. \
+Your job is to find every file or artifact the tool produces by tracing through \
+the actual source code.
+
+## What to extract
+
+For every output the tool produces, document:
+
+- **Path pattern** — how the output path is constructed from inputs
+- **Condition** — which inputs control whether this output is produced
+- **Source snippet** — the actual write/save call
+
+## How to work
+
+1. Start by grepping for file-writing calls across the source tree: \
+`save_volume`, `save`, `write`, `fopen`, `DSET_write`, `fprintf` to files, \
+shell redirects, etc. Filter to files relevant to this tool.
+2. For each write call, read the surrounding code to understand:
+   - What path/filename is used (trace it back to input arguments)
+   - What condition controls whether this write happens
+3. If the tool delegates to sub-binaries (you can see this from the interface \
+report or by reading the source), trace into those sources too.
+4. Cover ALL code paths — different modes, conditional branches, separate \
+main functions.
+
+## Report format
+
+Write the report directly as markdown (do NOT wrap it in a code block):
+
+- `# <tool_name> — Outputs`
+- `## Outputs` — for each output: path pattern, condition, source snippet
+- `## Source files examined` — files you read
+- `## Uncertainties` — anything you could not determine confidently
+
+## Source references
+
+Annotate every source snippet with file path and line numbers:
+
+<!-- source: path/to/file.cpp:55-57 -->
+```cpp
+code here
+```
+"""
+
+
+# ---------------------------------------------------------------------------
+# Package-specific strategies
+# ---------------------------------------------------------------------------
+
+FSL_INTERFACE_STRATEGY = """\
 
 ## Package-specific: FSL
 
@@ -132,10 +172,30 @@ Parse via `case`/`esac`, `getopts`, or `shift` loops.
 Look in: `*.cc`, `*.cpp`, shell scripts (no extension or `.sh`), `utils/options.h`.
 """
 
-STRATEGIES: dict[str, str] = {
-    "fsl": FSL_STRATEGY,
+FSL_OUTPUT_STRATEGY = """\
+
+## Package-specific: FSL
+
+FSL tools typically write outputs via `save_volume`, `save_volume4D`, or \
+mesh `.save()` calls. Output filenames are usually constructed by appending \
+suffixes to a base output name (e.g. `out + "_mask"`).
+
+Shell wrapper scripts may produce additional outputs via `fslmaths`, `immv`, \
+or by calling sub-binaries like `betsurf`. Trace these calls to find the \
+actual output paths.
+"""
+
+STRATEGIES: dict[str, dict[str, str]] = {
+    "fsl": {
+        "interface": FSL_INTERFACE_STRATEGY,
+        "output": FSL_OUTPUT_STRATEGY,
+    },
 }
 
+
+# ---------------------------------------------------------------------------
+# Agent runner
+# ---------------------------------------------------------------------------
 
 async def _run_agent(
     system_prompt: str,
@@ -199,35 +259,90 @@ async def _run_agent(
     raise RuntimeError(f"Agent exceeded {max_turns} turns without producing a result")
 
 
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+async def explore_interface(
+    tool_name: str,
+    repo_path: str | Path,
+    package: str = "fsl",
+    model: str = DEFAULT_MODEL,
+) -> str:
+    """Extract CLI input interface from source code.
+
+    Returns:
+        Markdown report of inputs, constraints, and parsing approach.
+    """
+    repo_root = str(Path(repo_path).resolve())
+    strategies = STRATEGIES.get(package, {})
+    system_prompt = INTERFACE_PROMPT + strategies.get("interface", "")
+
+    return await _run_agent(
+        system_prompt=system_prompt,
+        user_message=(
+            f"Analyze the tool '{tool_name}' in this repository. "
+            f"Produce a complete report of its input interface."
+        ),
+        repo_root=repo_root,
+        model=model,
+    )
+
+
+async def explore_outputs(
+    tool_name: str,
+    repo_path: str | Path,
+    interface_report: str,
+    package: str = "fsl",
+    model: str = DEFAULT_MODEL,
+) -> str:
+    """Trace output file generation from source code.
+
+    Args:
+        interface_report: The interface report from explore_interface,
+            provided as context so the output agent knows which inputs
+            control output generation.
+
+    Returns:
+        Markdown report of output files with path patterns and conditions.
+    """
+    repo_root = str(Path(repo_path).resolve())
+    strategies = STRATEGIES.get(package, {})
+    system_prompt = OUTPUT_PROMPT + strategies.get("output", "")
+
+    return await _run_agent(
+        system_prompt=system_prompt,
+        user_message=(
+            f"Trace all output files produced by the tool '{tool_name}' "
+            f"in this repository.\n\n"
+            f"Here is the interface report from a previous analysis — use it "
+            f"to understand which inputs exist and how the tool is structured:\n\n"
+            f"---\n\n{interface_report}"
+        ),
+        repo_root=repo_root,
+        model=model,
+    )
+
+
 async def explore(
     tool_name: str,
     repo_path: str | Path,
     package: str = "fsl",
     model: str = DEFAULT_MODEL,
 ) -> str:
-    """Run the Explorer agent to extract CLI information from source code.
-
-    Args:
-        tool_name: Name of the tool command to analyze (e.g. 'bet', 'bet2').
-        repo_path: Path to the cloned source repository.
-        package: Package identifier for strategy selection.
-        model: LLM model to use.
+    """Run both Explorer agents and combine their reports.
 
     Returns:
-        Markdown report describing the tool's CLI interface.
+        Combined markdown report (interface + outputs).
     """
-    repo_root = str(Path(repo_path).resolve())
-    strategy = STRATEGIES.get(package, "")
-    system_prompt = SYSTEM_PROMPT + strategy
+    interface_report = await explore_interface(
+        tool_name, repo_path, package=package, model=model,
+    )
+    logger.info("Interface report complete, starting output tracing...")
 
-    user_msg = (
-        f"Analyze the tool '{tool_name}' in this repository. "
-        f"Produce a complete report of its interface."
+    output_report = await explore_outputs(
+        tool_name, repo_path, interface_report, package=package, model=model,
     )
 
-    return await _run_agent(
-        system_prompt=system_prompt,
-        user_message=user_msg,
-        repo_root=repo_root,
-        model=model,
-    )
+    # Combine: use interface report as base, append outputs section
+    return f"{interface_report}\n\n{output_report}"
