@@ -68,33 +68,19 @@ tool's output — not internal utilities.
 
 ## Report format
 
-```markdown
-# <tool_name>
+Use these sections in this order. Write the report directly as markdown \
+(do NOT wrap it in a code block):
 
-<one-line description>
-
-## Invocation
-`<usage pattern>`
-
-## Parsing approach
-<parser used, source files, confidence level>
-
-## Inputs
-<for each input: name, description, type, cardinality, optionality, syntax, \
-constraints, source snippet>
-
-## Constraints
-<mutual exclusions, dependencies between inputs — omit if none>
-
-## Outputs
-<for each output: path pattern, condition, source snippet>
-
-## Source files examined
-<files you read>
-
-## Uncertainties
-<anything you could not determine confidently>
-```
+- `# <tool_name>` — tool name as heading, one-line description below
+- `## Invocation` — usage pattern
+- `## Parsing approach` — parser used, source files, confidence level
+- `## Inputs` — for each input: name, description, type, cardinality, \
+optionality, syntax, constraints, source snippet
+- `## Constraints` — mutual exclusions, dependencies between inputs \
+(omit if none)
+- `## Outputs` — for each output: path pattern, condition, source snippet
+- `## Source files examined` — files you read
+- `## Uncertainties` — anything you could not determine confidently
 
 ## Source references
 
@@ -191,7 +177,7 @@ async def _run_agent(
         message = choice.message
 
         if not message.tool_calls:
-            return _clean_report(message.content or "")
+            return message.content or ""
 
         messages.append(message.model_dump())
 
@@ -211,18 +197,6 @@ async def _run_agent(
             )
 
     raise RuntimeError(f"Agent exceeded {max_turns} turns without producing a result")
-
-
-def _clean_report(text: str) -> str:
-    """Remove duplicate report content that sometimes appears when the model
-    wraps its output in a markdown code block."""
-    import re
-
-    # If the report appears twice (once as text, once in a code block), keep only the first
-    match = re.search(r"\n```markdown\s*\n# ", text)
-    if match:
-        text = text[: match.start()].rstrip()
-    return text
 
 
 async def explore(
