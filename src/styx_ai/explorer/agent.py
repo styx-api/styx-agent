@@ -89,9 +89,6 @@ constraints, source snippet>
 ## Outputs
 <for each output: path pattern, condition, source snippet>
 
-## Delegated tools
-<tools invoked that produce user-visible outputs — omit if none>
-
 ## Source files examined
 <files you read>
 
@@ -194,7 +191,7 @@ async def _run_agent(
         message = choice.message
 
         if not message.tool_calls:
-            return message.content or ""
+            return _clean_report(message.content or "")
 
         messages.append(message.model_dump())
 
@@ -214,6 +211,18 @@ async def _run_agent(
             )
 
     raise RuntimeError(f"Agent exceeded {max_turns} turns without producing a result")
+
+
+def _clean_report(text: str) -> str:
+    """Remove duplicate report content that sometimes appears when the model
+    wraps its output in a markdown code block."""
+    import re
+
+    # If the report appears twice (once as text, once in a code block), keep only the first
+    match = re.search(r"\n```markdown\s*\n# ", text)
+    if match:
+        text = text[: match.start()].rstrip()
+    return text
 
 
 async def explore(
