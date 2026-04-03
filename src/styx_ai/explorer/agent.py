@@ -138,7 +138,12 @@ Write the report directly as markdown (do NOT wrap it in a code block):
 - `# <tool_name> — Outputs`
 - `## Outputs` — for each output: path pattern, condition, source snippet
 - `## Source files examined` — files you read
-- `## Uncertainties` — anything you could not determine confidently
+- `## Uncertainties` — anything you investigated but could not resolve
+
+Before reporting an uncertainty, try to resolve it: grep for the function or \
+macro in question, read header files, follow the call chain. Only report an \
+uncertainty after you have actually looked and could not find the answer in \
+the repository.
 
 ## Source references
 
