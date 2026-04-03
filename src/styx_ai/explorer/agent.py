@@ -194,6 +194,7 @@ async def _run_agent(
     user_message: str,
     repo_root: str,
     model: str,
+    label: str = "agent",
     max_turns: int = MAX_TURNS,
 ) -> str:
     """Run an LLM agent loop with filesystem tools."""
@@ -203,7 +204,7 @@ async def _run_agent(
     ]
 
     for turn in range(max_turns):
-        logger.info(f"Agent turn {turn + 1}/{max_turns}")
+        logger.info(f"[{label}] turn {turn + 1}/{max_turns}")
 
         for attempt in range(5):
             try:
@@ -216,13 +217,13 @@ async def _run_agent(
                 break
             except litellm.exceptions.RateLimitError:
                 wait = min(2 ** attempt * 10, 60)
-                logger.warning(f"Rate limited, waiting {wait}s (attempt {attempt + 1}/5)")
+                logger.warning(f"[{label}] rate limited, waiting {wait}s (attempt {attempt + 1}/5)")
                 await asyncio.sleep(wait)
                 if attempt == 4:
                     raise
 
         if not response.choices:
-            logger.warning("Empty response from API, retrying...")
+            logger.warning(f"[{label}] empty response, retrying...")
             continue
 
         choice = response.choices[0]
@@ -236,7 +237,7 @@ async def _run_agent(
         for tool_call in message.tool_calls:
             fn = tool_call.function
             args = json.loads(fn.arguments)
-            logger.info(f"  Tool: {fn.name}({fn.arguments})")
+            logger.info(f"[{label}]   {fn.name}({fn.arguments})")
             result = execute_tool(fn.name, args, repo_root)
             logger.debug(f"  Result: {result[:200]}...")
 
@@ -248,7 +249,7 @@ async def _run_agent(
                 }
             )
 
-    raise RuntimeError(f"Agent exceeded {max_turns} turns without producing a result")
+    raise RuntimeError(f"[{label}] exceeded {max_turns} turns without producing a result")
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +279,7 @@ async def explore_interface(
         ),
         repo_root=repo_root,
         model=model,
+        label="interface",
     )
 
 
@@ -313,6 +315,7 @@ async def explore_outputs(
         ),
         repo_root=repo_root,
         model=model,
+        label="outputs",
     )
 
 
