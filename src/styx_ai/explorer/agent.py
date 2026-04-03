@@ -102,10 +102,7 @@ reading the surrounding context. Every output in your report must have a \
 source snippet showing the actual write call.
 - When a tool delegates to sub-binaries, read those sources too to find their \
 outputs. Cover all code paths (modes, branches, conditional logic).
-- Mark uncertainties explicitly rather than guessing. But before reporting \
-an uncertainty, check if you can resolve it by reading another file in the \
-repo (e.g. a header file, a shared library source). Only report uncertainties \
-you genuinely cannot resolve from the available source code.
+- Mark uncertainties explicitly rather than guessing.
 """
 
 
