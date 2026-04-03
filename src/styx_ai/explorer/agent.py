@@ -105,21 +105,30 @@ the actual source code.
 
 For every output the tool produces, document:
 
-- **Path pattern** — how the output path is constructed from inputs
+- **Path pattern** — the COMPLETE filename(s) produced, including extensions. \
+Trace the write call down to where the actual filename string is constructed. \
+If a library function adds extensions (e.g. a macro appends `.HEAD`/`.BRIK`), \
+follow it into the library source to find out what files actually appear on \
+disk. "Writes a dataset at prefix" is NOT sufficient — the downstream agent \
+needs exact filenames like `<prefix>+orig.HEAD` and `<prefix>+orig.BRIK`.
 - **Condition** — which inputs control whether this output is produced
-- **Source snippet** — the actual write/save call
+- **Source snippet** — the actual write/save call, AND the code that constructs \
+the filename
 
 ## How to work
 
 1. Start by grepping for file-writing calls across the source tree: \
 `save_volume`, `save`, `write`, `fopen`, `DSET_write`, `fprintf` to files, \
 shell redirects, etc. Filter to files relevant to this tool.
-2. For each write call, read the surrounding code to understand:
-   - What path/filename is used (trace it back to input arguments)
-   - What condition controls whether this write happens
-3. If the tool delegates to sub-binaries (you can see this from the interface \
+2. For each write call, trace the filename construction:
+   - What path/filename string is passed to the write function?
+   - Is it a complete filename or does the write function add extensions?
+   - If the write function is a macro or wrapper, follow it to find out what \
+files it actually creates. Read header files and library source as needed.
+3. For each write call, determine what condition controls whether it executes.
+4. If the tool delegates to sub-binaries (you can see this from the interface \
 report or by reading the source), trace into those sources too.
-4. Cover ALL code paths — different modes, conditional branches, separate \
+5. Cover ALL code paths — different modes, conditional branches, separate \
 main functions.
 
 ## Report format
