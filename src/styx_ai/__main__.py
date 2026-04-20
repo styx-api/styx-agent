@@ -6,7 +6,8 @@ Subcommands:
     styx-ai explore <tool> <repo>                 # per-tool exploration (strategy + interface + outputs)
     styx-ai explore <tool> <repo> --interface-only
     styx-ai explore <tool> <repo> --outputs-only --interface-report report.md
-    styx-ai author <tool> --interface-report FILE --outputs-report FILE  # translate reports to Boutiques JSON
+    styx-ai author <tool> --interface-report FILE --outputs-report FILE  # translate reports to descriptor
+    styx-ai wrap <tool> <repo>                    # full pipeline: scan → interface → outputs → author
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import logging
 import os
 import sys
 
+from styx_ai import wrap
 from styx_ai.author import author_boutiques
 from styx_ai.explorer import explore, explore_interface, explore_outputs
 from styx_ai.scanner import explore_strategy
@@ -154,6 +156,27 @@ def main() -> None:
     author_p.add_argument("--output", "-o", help="Output file path (default: stdout)")
     author_p.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
 
+    # styx-ai wrap <tool> <repo>
+    wrap_p = subparsers.add_parser(
+        "wrap",
+        help="Full pipeline: scan → interface → outputs → author",
+    )
+    wrap_p.add_argument("tool", help="Tool command name")
+    wrap_p.add_argument("repo", help="Path to cloned source repository")
+    wrap_p.add_argument(
+        "--target", default="boutiques", choices=("boutiques",),
+        help="Descriptor target format",
+    )
+    wrap_p.add_argument(
+        "--refresh-strategy", action="store_true",
+        help="Regenerate the package strategy even if a cached copy exists",
+    )
+    wrap_p.add_argument(
+        "--max-retries", type=int, default=3,
+        help="Author retries on validation failure (default: 3)",
+    )
+    _add_common_args(wrap_p)
+
     args = parser.parse_args()
     _configure_logging(args.verbose)
 
@@ -197,6 +220,13 @@ def main() -> None:
         if args.model:
             kwargs["model"] = args.model
         result = asyncio.run(author_boutiques(**kwargs))
+    elif args.command == "wrap":
+        wrap_kwargs: dict = _common_kwargs(args)
+        wrap_kwargs["tool_name"] = args.tool
+        wrap_kwargs["target"] = args.target
+        wrap_kwargs["refresh_strategy"] = args.refresh_strategy
+        wrap_kwargs["max_retries"] = args.max_retries
+        result = asyncio.run(wrap(**wrap_kwargs))
     else:
         parser.error(f"unknown command: {args.command}")
 
