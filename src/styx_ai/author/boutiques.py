@@ -114,11 +114,15 @@ Required:
 reference input `value-key`s (e.g. `"[OUTPUT_PREFIX]_mask.nii.gz"`).
 
 Optional:
-- `description`, `optional`.
+- `description`.
 - `path-template-stripped-extensions` — list of extensions stripped from a \
 referenced File input's value BEFORE substitution, e.g. `[".nii.gz", ".nii"]`.
 - `path-template-fallback` — fallback string used if a referenced input is \
 optional and unset.
+
+**Do NOT put `optional` on an output-file.** Styx-v1 does not allow it. If \
+an output is conditionally produced, model the condition by placing the \
+output-file inside the relevant SubCommand branch's `output-files`.
 
 Every `path-template` must be unique across output-files. Paths must NOT \
 contain `< > : " \\ | ? *`.
