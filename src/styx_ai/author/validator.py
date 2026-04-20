@@ -21,7 +21,6 @@ ID_PATTERN = re.compile(r"^[0-9_a-zA-Z]+$")
 VALUE_KEY_PATTERN = re.compile(r"^\[[A-Z0-9_]+\]$")
 _COMMAND_KEY_FIND = re.compile(r"\[([A-Z0-9_]+)\]")
 _PATH_TEMPLATE_INVALID = re.compile(r"[<>:\"|?*]")
-_LITERAL_FLAG_IN_CL = re.compile(r"(^|\s)-[a-zA-Z0-9]")
 
 SCHEMA_VERSION = "0.5+styx"
 PRIMITIVE_TYPES = {"File", "String", "Number", "Flag"}
@@ -45,13 +44,16 @@ _OUTPUT_ALLOWED = {
 _SUBCOMMAND_ALLOWED = {"id", "name", "description", "command-line", "inputs", "output-files"}
 _SUBCOMMAND_REQUIRED = {"id", "command-line"}
 
-_TOP_REQUIRED = {"name", "description", "schema-version", "command-line", "inputs"}
-_TOP_OPTIONAL = {"output-files", "author", "url", "stdout-output", "stderr-output"}
-_TOP_FORBIDDEN = {
-    "container-image", "tool-version", "tags", "tests",
-    "environment-variables", "custom", "online-platform-urls",
-    "error-codes", "suggested-resources", "invocation-schema",
-}
+# Fields the author (LLM) is expected to produce.
+_TOP_REQUIRED = {"description", "command-line", "inputs"}
+_TOP_OPTIONAL = {"output-files", "stdout-output", "stderr-output"}
+
+# Fields injected or populated outside the author's scope but still
+# legitimate Styx-v1 fields. The validator accepts them; the prompt
+# does not invite the model to emit them.
+_TOP_EXTERNAL = {"name", "schema-version", "author", "url"}
+
+_TOP_ALLOWED = _TOP_REQUIRED | _TOP_OPTIONAL | _TOP_EXTERNAL
 
 _STDIO_ALLOWED = {"id", "name", "description"}
 
@@ -99,7 +101,7 @@ def validate(data: Any) -> list[ValidationError]:
 # ---------------------------------------------------------------------------
 
 def _check_top_level(data: dict, errors: list[ValidationError]) -> None:
-    for req in _TOP_REQUIRED:
+    for req in _TOP_REQUIRED | {"name", "schema-version"}:
         if req not in data:
             errors.append(ValidationError(req, f"missing required top-level field '{req}'"))
 
@@ -122,16 +124,12 @@ def _check_top_level(data: dict, errors: list[ValidationError]) -> None:
     if inputs is not None and not isinstance(inputs, list):
         errors.append(ValidationError("inputs", "must be an array"))
 
-    for key in _TOP_FORBIDDEN & set(data):
+    for key in sorted(set(data) - _TOP_ALLOWED):
         errors.append(ValidationError(
             key,
-            f"field '{key}' is not permitted in Styx-v1",
-            hint="The Styx ecosystem intentionally omits this Boutiques field.",
+            f"top-level field '{key}' is not permitted in Styx-v1",
+            hint=f"Allowed top-level fields: {sorted(_TOP_REQUIRED | _TOP_OPTIONAL)} (emitted by you) plus name/schema-version (injected automatically).",
         ))
-
-    allowed = _TOP_REQUIRED | _TOP_OPTIONAL | _TOP_FORBIDDEN
-    for key in sorted(set(data) - allowed):
-        errors.append(ValidationError(key, f"unknown top-level field '{key}'"))
 
 
 # ---------------------------------------------------------------------------
@@ -215,12 +213,6 @@ def _check_input_primitive(
             path,
             "Flag type cannot be a list",
         ))
-    if type_val == "Number" and "integer" not in inp:
-        errors.append(ValidationError(
-            f"{path}.integer",
-            "Number inputs require 'integer' (true for int, false for float)",
-        ))
-
     if "list" in inp and inp["list"] is not True:
         errors.append(ValidationError(
             f"{path}.list",
@@ -432,7 +424,6 @@ def _check_local_command_line(
     cl_path = f"{path_prefix}.command-line" if path_prefix else "command-line"
     inputs_path = f"{path_prefix}.inputs" if path_prefix else "inputs"
 
-    trimmed = command_line
     if require_name_prefix:
         name = context.get("name")
         if isinstance(name, str) and name:
@@ -441,15 +432,6 @@ def _check_local_command_line(
                     cl_path,
                     f"must start with the tool name {name!r}",
                 ))
-            if command_line.startswith(name):
-                trimmed = command_line[len(name):].lstrip()
-
-    if _LITERAL_FLAG_IN_CL.search(trimmed):
-        errors.append(ValidationError(
-            cl_path,
-            "command-line template contains literal flag text",
-            hint="The template should contain only the tool/subcommand name, spaces, [VALUE_KEYS], and literal brackets for SubCommand micro-syntax. Flag characters like '-x' belong in the input's 'command-line-flag' field.",
-        ))
 
     direct_value_keys: list[str] = []
     for inp in inputs:

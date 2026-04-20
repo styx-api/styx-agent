@@ -34,10 +34,11 @@ condition under which the file is produced, and a source snippet.
 
 ## Descriptor shape (Styx v1)
 
-**The runtime injects `name` and `schema-version` for you. Do NOT emit \
-those two fields.**
+**The runtime injects `name` and `schema-version`. Do NOT emit those two \
+fields. Emit ONLY the fields listed below — any other top-level field is \
+rejected.**
 
-Top-level required fields YOU emit:
+Top-level required fields:
 - `description` — one-paragraph plain description of what the tool does.
 - `command-line` — a template string with `[UPPERCASE_KEYS]` placeholders, \
 beginning with the tool name. Each top-level input's `value-key` MUST appear \
@@ -47,8 +48,6 @@ input's `value-key`.
 
 Top-level optional fields:
 - `output-files` — array of output file objects (see below).
-- `author`, `url` — tool attribution (emit if clearly known from the \
-reports; otherwise omit).
 - `stdout-output`, `stderr-output` — if the tool emits structured text to \
 stdout/stderr that downstream callers should capture.
 
