@@ -1,0 +1,6 @@
+{
+  "afni": ["https://github.com/afni/afni.git"],
+  "ants": ["https://github.com/ANTsX/ANTs.git"],
+  "freesurfer": ["https://github.com/freesurfer/freesurfer.git"],
+  "fsl": []
+}
