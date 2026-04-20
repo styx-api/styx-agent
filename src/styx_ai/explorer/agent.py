@@ -50,13 +50,16 @@ Every input the tool accepts. For each one, document:
 or unbounded list
 - **Optionality** — required or optional, with default value if any
 - **Syntax** — how the user provides it: flag (`-f`, `--flag`), positional \
-(by index), or other
+(by index), or other. For positional args, note whether the parser requires \
+them in a specific position (e.g. must come last because the parser loop \
+stops processing flags after it)
 - **Constraints** — value ranges, allowed choices, dependencies on other inputs
 - **Source snippet** — the code where this input is defined
 
 ### Constraints
 
-Mutual exclusions and dependencies between inputs.
+Mutual exclusions, dependencies between inputs, and argument ordering \
+requirements (e.g. positional args that must appear after all flags).
 
 ## Report format
 
