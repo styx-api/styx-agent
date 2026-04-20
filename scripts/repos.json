@@ -2,5 +2,18 @@
   "afni": ["https://github.com/afni/afni.git"],
   "ants": ["https://github.com/ANTsX/ANTs.git"],
   "freesurfer": ["https://github.com/freesurfer/freesurfer.git"],
-  "fsl": []
+  "fsl": [
+    "https://git.fmrib.ox.ac.uk/fsl/bet2.git",
+    "https://git.fmrib.ox.ac.uk/fsl/flirt.git",
+    "https://git.fmrib.ox.ac.uk/fsl/fnirt.git",
+    "https://git.fmrib.ox.ac.uk/fsl/fugue.git",
+    "https://git.fmrib.ox.ac.uk/fsl/mcflirt.git",
+    "https://git.fmrib.ox.ac.uk/fsl/melodic.git",
+    "https://git.fmrib.ox.ac.uk/fsl/randomise.git",
+    "https://git.fmrib.ox.ac.uk/fsl/slicetimer.git",
+    "https://git.fmrib.ox.ac.uk/fsl/susan.git",
+    "https://git.fmrib.ox.ac.uk/fsl/tbss.git",
+    "https://git.fmrib.ox.ac.uk/fsl/topup.git",
+    "https://git.fmrib.ox.ac.uk/fsl/xtract.git"
+  ]
 }
