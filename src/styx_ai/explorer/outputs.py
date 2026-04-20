@@ -45,6 +45,14 @@ Annotate every source snippet with file path and line numbers:
 ```cpp
 code here
 ```
+
+## Output discipline
+
+Output ONLY the requested markdown report. Do not preface it with narrative \
+("Okay, I have now gathered enough..."), commentary about your process, or \
+notes about what you explored. The first line of your response must be the \
+`# <tool_name> — Outputs` heading. No trailing commentary either \
+("I'm ready to present the report", "Analysis complete", etc.).
 """
 
 

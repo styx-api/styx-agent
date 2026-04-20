@@ -70,6 +70,14 @@ code here
 - Read ALL of each relevant source file. Page through large files with \
 offset/limit or use read_tail.
 - Mark uncertainties explicitly rather than guessing.
+
+## Output discipline
+
+Output ONLY the requested markdown report. Do not preface it with narrative \
+("Okay, I have now gathered enough..."), commentary about your process, or \
+notes about what you explored. The first line of your response must be the \
+`# <tool_name>` heading. No trailing commentary either ("I'm ready to present \
+the report", "Analysis complete", etc.).
 """
 
 
