@@ -79,7 +79,9 @@ def load_strategy(
 ) -> str:
     """Load cached per-section strategy files and concatenate them.
 
-    Falls back to a hand-written strategy when no cache exists, else empty.
+    Returns an empty string if no cache exists (per-tool agents will run
+    without package-specific context; caller should run ``explore_strategy``
+    first for best results).
     """
     pkg_dir = _package_dir(package, cache_dir)
     fragments: list[str] = []
@@ -88,84 +90,12 @@ def load_strategy(
         if path.exists():
             fragments.append(path.read_text(encoding="utf-8").strip())
 
-    if fragments:
-        body = "\n\n".join(fragments)
-        return f"\n\n## Package: {package}\n\n{body}\n"
-
-    return _FALLBACK_STRATEGIES.get(package, "")
+    if not fragments:
+        return ""
+    body = "\n\n".join(fragments)
+    return f"\n\n## Package: {package}\n\n{body}\n"
 
 
 def _package_dir(package: str, cache_dir: str | Path | None) -> Path:
     base = Path(cache_dir) if cache_dir is not None else DEFAULT_CACHE_DIR
     return base / package
-
-
-# ---------------------------------------------------------------------------
-# Hand-written fallbacks used when no cached strategy exists.
-# Keep until generated strategies are validated across packages.
-# ---------------------------------------------------------------------------
-
-_FSL_FALLBACK = """\
-
-## Package: fsl
-
-### Orientation
-
-FSL is a monorepo where each tool lives in its own top-level subdirectory. \
-Most tools are C++ binaries with optional shell wrapper scripts.
-
-### Locating a tool
-
-For tool `X`, look in `X/` subdirectory: `X/X.cc` or `X/X.cpp` for the \
-binary source, and an optional shell script named `X` (no extension) for a \
-wrapper.
-
-### Tool enumeration
-
-Scan top-level subdirectories. Each contains a Makefile listing the binaries \
-it builds. Shell wrappers sit alongside the binaries they wrap.
-
-### Parsing & help text
-
-**Option<T> / OptionParser** — `#include "utils/options.h"`:
-```cpp
-Option<float> threshold(string("-f"), 0.5,
-    string("fractional intensity threshold (0->1)"),
-    false, requires_argument);
-```
-Constructor: `Option<T>(keys, default, help_text, compulsory, arg_flag)`.
-- `no_argument` = boolean, `requires_argument` = 1 value, `requires_N_arguments` = N values.
-
-**Manual if/else** — older tools:
-```cpp
-if (arg == "-bins") { no_bins = atoi(argv[n+1]); n+=2; continue; }
-```
-
-**Shell wrappers** — `case`/`esac`, `getopts`, or `shift` loops.
-
-Help text is the third constructor argument to `Option<T>`; quote it verbatim.
-
-### Types
-
-- `Option<float>` / `atof` → float
-- `Option<int>` / `atoi` → int
-- `Option<bool>` with `no_argument` → boolean
-- `Option<string>` → string
-- `Option<std::vector<T>>` with `requires_N_arguments` → fixed-length tuple
-
-### Outputs
-
-FSL tools typically write outputs via `save_volume`, `save_volume4D`, or mesh \
-`.save()` calls. Filenames are usually constructed by appending suffixes to \
-a base output name (e.g. `out + "_mask"`). Common extension: `.nii.gz`.
-
-### Wrappers & delegation
-
-Shell wrapper scripts produce additional outputs via `fslmaths`, `immv`, or \
-by calling sub-binaries like `betsurf`. Trace these calls to find actual \
-output paths.
-"""
-
-_FALLBACK_STRATEGIES: dict[str, str] = {
-    "fsl": _FSL_FALLBACK,
-}
