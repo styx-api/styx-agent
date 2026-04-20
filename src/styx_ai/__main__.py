@@ -6,6 +6,7 @@ Subcommands:
     styx-ai explore <tool> <repo>                 # per-tool exploration (strategy + interface + outputs)
     styx-ai explore <tool> <repo> --interface-only
     styx-ai explore <tool> <repo> --outputs-only --interface-report report.md
+    styx-ai author <tool> --interface-report FILE --outputs-report FILE  # translate reports to Boutiques JSON
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import logging
 import os
 import sys
 
+from styx_ai.author import author_boutiques
 from styx_ai.explorer import explore, explore_interface, explore_outputs
 from styx_ai.scanner import explore_strategy
 
@@ -126,6 +128,32 @@ def main() -> None:
     )
     _add_common_args(explore_p)
 
+    # styx-ai author <tool> --interface-report FILE --outputs-report FILE
+    author_p = subparsers.add_parser(
+        "author",
+        help="Translate Explorer reports into a descriptor (default target: boutiques)",
+    )
+    author_p.add_argument("tool", help="Tool name (matches the # heading in the interface report)")
+    author_p.add_argument(
+        "--interface-report", required=True,
+        help="Path to interface report (from `styx-ai explore --interface-only`)",
+    )
+    author_p.add_argument(
+        "--outputs-report", required=True,
+        help="Path to outputs report (from `styx-ai explore --outputs-only`)",
+    )
+    author_p.add_argument(
+        "--target", default="boutiques", choices=("boutiques",),
+        help="Descriptor target format",
+    )
+    author_p.add_argument(
+        "--max-retries", type=int, default=3,
+        help="Retries when validation fails (default: 3)",
+    )
+    author_p.add_argument("--model", default=None, help="LLM model override")
+    author_p.add_argument("--output", "-o", help="Output file path (default: stdout)")
+    author_p.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+
     args = parser.parse_args()
     _configure_logging(args.verbose)
 
@@ -155,6 +183,20 @@ def main() -> None:
                     **common,
                 )
             )
+    elif args.command == "author":
+        with open(args.interface_report, encoding="utf-8") as f:
+            interface_report = f.read()
+        with open(args.outputs_report, encoding="utf-8") as f:
+            output_report = f.read()
+        kwargs: dict = {
+            "tool_name": args.tool,
+            "interface_report": interface_report,
+            "output_report": output_report,
+            "max_retries": args.max_retries,
+        }
+        if args.model:
+            kwargs["model"] = args.model
+        result = asyncio.run(author_boutiques(**kwargs))
     else:
         parser.error(f"unknown command: {args.command}")
 
