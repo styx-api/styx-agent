@@ -98,10 +98,15 @@ def find_files(pattern: str, repo_root: str, path: str = ".") -> str:
 
 
 def _resolve(path: str, repo_root: str) -> Path:
-    """Resolve a path relative to repo root, preventing directory traversal."""
+    """Resolve a path relative to repo root, preventing directory traversal.
+
+    Rejects paths that escape the repo via ``..``, absolute paths, or symlinks
+    that point outside the repo — the source repos we scan are third-party, so
+    symlinked escapes are a realistic vector.
+    """
     root = Path(repo_root).resolve()
     resolved = (root / path).resolve()
-    if not str(resolved).startswith(str(root)):
+    if resolved != root and not resolved.is_relative_to(root):
         return root
     return resolved
 

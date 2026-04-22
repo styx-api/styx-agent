@@ -18,6 +18,7 @@ styx-ai = "styx_ai.__main__:main"
 dev = [
     "ruff",
     "pyright",
+    "pytest",
 ]
 
 [tool.ruff]
