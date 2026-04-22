@@ -3,7 +3,7 @@
 Three focused scan agents run per package. The enumeration scan runs first;
 its report is passed as context to the parsing and outputs scans, which then
 run in parallel. The output is cached as three per-section files at
-``output/_strategies/<package>/<section>.md``. ``load_strategy`` reads and
+``<out_root>/<package>/_strategy/<section>.md``. ``load_strategy`` reads and
 concatenates them under a single ``## Package: <name>`` header.
 """
 
@@ -14,17 +14,16 @@ import logging
 from pathlib import Path
 
 from styx_ai.agent import DEFAULT_MODEL
+from styx_ai.paths import strategy_dir
 from styx_ai.scanner.enumeration import scan_enumeration
 from styx_ai.scanner.outputs import scan_outputs
 from styx_ai.scanner.parsing import scan_parsing
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CACHE_DIR = Path("output/_strategies")
 SECTIONS = ("enumeration", "parsing", "outputs")
 
 __all__ = [
-    "DEFAULT_CACHE_DIR",
     "SECTIONS",
     "explore_strategy",
     "load_strategy",
@@ -38,7 +37,7 @@ async def explore_strategy(
     package: str,
     repo_path: str | Path,
     model: str = DEFAULT_MODEL,
-    cache_dir: str | Path | None = None,
+    out_root: str | Path | None = None,
     refresh: bool = False,
 ) -> str:
     """Produce (or load from cache) the package-specific strategy document.
@@ -46,12 +45,12 @@ async def explore_strategy(
     The enumeration scan runs first; its report is passed to the parsing and
     outputs scans, which run in parallel.
     """
-    pkg_dir = _package_dir(package, cache_dir)
+    pkg_dir = strategy_dir(package, out_root)
     section_paths = {s: pkg_dir / f"{s}.md" for s in SECTIONS}
 
     if all(p.exists() for p in section_paths.values()) and not refresh:
         logger.info(f"[strategy] using cached strategy at {pkg_dir}")
-        return load_strategy(package, cache_dir)
+        return load_strategy(package, out_root)
 
     repo_root = str(Path(repo_path).resolve())
     logger.info(f"[strategy] scanning '{package}' at {repo_root}")
@@ -70,12 +69,12 @@ async def explore_strategy(
     section_paths["outputs"].write_text(outputs, encoding="utf-8")
     logger.info(f"[strategy] parsing + outputs cached to {pkg_dir}")
 
-    return load_strategy(package, cache_dir)
+    return load_strategy(package, out_root)
 
 
 def load_strategy(
     package: str,
-    cache_dir: str | Path | None = None,
+    out_root: str | Path | None = None,
 ) -> str:
     """Load cached per-section strategy files and concatenate them.
 
@@ -83,7 +82,7 @@ def load_strategy(
     without package-specific context; caller should run ``explore_strategy``
     first for best results).
     """
-    pkg_dir = _package_dir(package, cache_dir)
+    pkg_dir = strategy_dir(package, out_root)
     fragments: list[str] = []
     for section in SECTIONS:
         path = pkg_dir / f"{section}.md"
@@ -94,8 +93,3 @@ def load_strategy(
         return ""
     body = "\n\n".join(fragments)
     return f"\n\n## Package: {package}\n\n{body}\n"
-
-
-def _package_dir(package: str, cache_dir: str | Path | None) -> Path:
-    base = Path(cache_dir) if cache_dir is not None else DEFAULT_CACHE_DIR
-    return base / package

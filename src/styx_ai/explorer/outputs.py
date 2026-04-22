@@ -62,7 +62,7 @@ async def explore_outputs(
     interface_report: str,
     package: str = "fsl",
     model: str = DEFAULT_MODEL,
-    cache_dir: str | Path | None = None,
+    out_root: str | Path | None = None,
 ) -> str:
     """Trace output file generation from source code.
 
@@ -75,7 +75,7 @@ async def explore_outputs(
         Markdown report of output files with path patterns and conditions.
     """
     repo_root = str(Path(repo_path).resolve())
-    system_prompt = OUTPUT_PROMPT + load_strategy(package, cache_dir)
+    system_prompt = OUTPUT_PROMPT + load_strategy(package, out_root)
 
     return await run_agent(
         system_prompt=system_prompt,

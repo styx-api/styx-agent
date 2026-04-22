@@ -7,6 +7,7 @@ from pathlib import Path
 from styx_ai.agent import DEFAULT_MODEL
 from styx_ai.author import author_boutiques
 from styx_ai.explorer import explore_interface, explore_outputs
+from styx_ai.paths import tool_dir
 from styx_ai.scanner import explore_strategy
 
 __all__ = ["wrap"]
@@ -18,36 +19,47 @@ async def wrap(
     package: str = "fsl",
     target: str = "boutiques",
     model: str = DEFAULT_MODEL,
-    cache_dir: str | Path | None = None,
+    out_root: str | Path | None = None,
     refresh_strategy: bool = False,
     max_retries: int = 3,
-) -> str:
+) -> Path:
     """Run the full pipeline: scan → interface → outputs → author.
 
-    Returns the descriptor JSON as a string.
+    Writes three artifacts to ``<out_root>/<package>/<tool_name>/``:
+    ``interface.md``, ``outputs.md``, ``boutiques.json`` (or whatever the
+    target demands). Returns the path to the tool's output directory.
     """
     await explore_strategy(
         package=package,
         repo_path=repo_path,
         model=model,
-        cache_dir=cache_dir,
+        out_root=out_root,
         refresh=refresh_strategy,
     )
 
     interface_report = await explore_interface(
-        tool_name, repo_path, package=package, model=model, cache_dir=cache_dir,
+        tool_name, repo_path, package=package, model=model, out_root=out_root,
     )
     output_report = await explore_outputs(
         tool_name, repo_path, interface_report,
-        package=package, model=model, cache_dir=cache_dir,
+        package=package, model=model, out_root=out_root,
     )
 
+    dest = tool_dir(package, tool_name, out_root)
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "interface.md").write_text(interface_report, encoding="utf-8")
+    (dest / "outputs.md").write_text(output_report, encoding="utf-8")
+
     if target == "boutiques":
-        return await author_boutiques(
+        descriptor = await author_boutiques(
             tool_name=tool_name,
             interface_report=interface_report,
             output_report=output_report,
             model=model,
             max_retries=max_retries,
         )
-    raise ValueError(f"unknown author target: {target!r}")
+        (dest / "boutiques.json").write_text(descriptor, encoding="utf-8")
+    else:
+        raise ValueError(f"unknown author target: {target!r}")
+
+    return dest

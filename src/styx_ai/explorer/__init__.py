@@ -36,30 +36,30 @@ async def explore(
     repo_path: str | Path,
     package: str = "fsl",
     model: str = DEFAULT_MODEL,
-    cache_dir: str | Path | None = None,
+    out_root: str | Path | None = None,
     refresh_strategy: bool = False,
-) -> str:
+) -> tuple[str, str]:
     """Run the full per-tool pipeline: ensure strategy → interface → outputs.
 
     Returns:
-        Combined markdown report (interface + outputs).
+        (interface_report, output_report) as separate strings.
     """
     await explore_strategy(
         package=package,
         repo_path=repo_path,
         model=model,
-        cache_dir=cache_dir,
+        out_root=out_root,
         refresh=refresh_strategy,
     )
 
     interface_report = await explore_interface(
-        tool_name, repo_path, package=package, model=model, cache_dir=cache_dir,
+        tool_name, repo_path, package=package, model=model, out_root=out_root,
     )
     logger.info("Interface report complete, starting output tracing...")
 
     output_report = await explore_outputs(
         tool_name, repo_path, interface_report,
-        package=package, model=model, cache_dir=cache_dir,
+        package=package, model=model, out_root=out_root,
     )
 
-    return f"{interface_report}\n\n{output_report}"
+    return interface_report, output_report

@@ -1,12 +1,19 @@
 """Top-level CLI for styx-ai.
 
+All commands write to a conventional layout under ``--out-root`` (default
+``output/``):
+
+    <out_root>/<package>/_strategy/{enumeration,parsing,outputs}.md
+    <out_root>/<package>/<tool>/{interface,outputs}.md
+    <out_root>/<package>/<tool>/boutiques.json
+
 Subcommands:
 
     styx-ai scan <repo>                           # per-package strategy scan
     styx-ai explore <tool> <repo>                 # per-tool exploration (strategy + interface + outputs)
     styx-ai explore <tool> <repo> --interface-only
-    styx-ai explore <tool> <repo> --outputs-only --interface-report report.md
-    styx-ai author <tool> --interface-report FILE --outputs-report FILE  # translate reports to descriptor
+    styx-ai explore <tool> <repo> --outputs-only
+    styx-ai author <tool>                         # translate tool's cached reports into a descriptor
     styx-ai wrap <tool> <repo>                    # full pipeline: scan → interface → outputs → author
 """
 
@@ -17,15 +24,16 @@ import asyncio
 import logging
 import os
 import sys
+from pathlib import Path
 
 from styx_ai import wrap
 from styx_ai.author import author_boutiques
 from styx_ai.explorer import explore, explore_interface, explore_outputs
+from styx_ai.paths import strategy_dir, tool_dir
 from styx_ai.scanner import explore_strategy
 
 
 def _configure_stdout() -> None:
-    """Ensure stdout can emit UTF-8 (Windows consoles default to cp1252)."""
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if hasattr(sys.stderr, "reconfigure"):
@@ -56,33 +64,24 @@ def _configure_logging(verbose: bool) -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
-def _write_result(result: str, output_path: str | None) -> None:
-    if output_path:
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(result)
-            f.write("\n")
-        print(f"Wrote report to {output_path}", file=sys.stderr)
-    else:
-        print(result)
-
-
 def _add_common_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--package", default="fsl", help="Package identifier (default: fsl)")
     p.add_argument("--model", default=None, help="LLM model override")
-    p.add_argument("--output", "-o", help="Output file path (default: stdout)")
-    p.add_argument("--cache-dir", help="Strategy cache directory (default: output/_strategies)")
+    p.add_argument(
+        "--out-root", default=None,
+        help="Output root directory (default: output/)",
+    )
     p.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
 
 
-def _common_kwargs(args: argparse.Namespace) -> dict:
-    kwargs: dict = {
-        "repo_path": args.repo,
-        "package": args.package,
-        "cache_dir": args.cache_dir,
-    }
-    if args.model:
-        kwargs["model"] = args.model
-    return kwargs
+def _model_kwarg(args: argparse.Namespace) -> dict:
+    return {"model": args.model} if args.model else {}
+
+
+def _write_file(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content + ("\n" if not content.endswith("\n") else ""), encoding="utf-8")
+    print(f"Wrote {path}", file=sys.stderr)
 
 
 def main() -> None:
@@ -122,27 +121,30 @@ def main() -> None:
     )
     mode.add_argument(
         "--outputs-only", action="store_true",
-        help="Only trace outputs (requires --interface-report)",
+        help="Only trace outputs (requires an existing interface.md)",
     )
     explore_p.add_argument(
         "--interface-report",
-        help="Path to interface report (for --outputs-only mode)",
+        help=(
+            "Path to interface report for --outputs-only mode "
+            "(default: <out-root>/<package>/<tool>/interface.md)"
+        ),
     )
     _add_common_args(explore_p)
 
-    # styx-ai author <tool> --interface-report FILE --outputs-report FILE
+    # styx-ai author <tool>
     author_p = subparsers.add_parser(
         "author",
-        help="Translate Explorer reports into a descriptor (default target: boutiques)",
+        help="Translate a tool's cached reports into a descriptor",
     )
-    author_p.add_argument("tool", help="Tool name (matches the # heading in the interface report)")
+    author_p.add_argument("tool", help="Tool name")
     author_p.add_argument(
-        "--interface-report", required=True,
-        help="Path to interface report (from `styx-ai explore --interface-only`)",
+        "--interface-report",
+        help="Override path to interface report (default: <out-root>/<package>/<tool>/interface.md)",
     )
     author_p.add_argument(
-        "--outputs-report", required=True,
-        help="Path to outputs report (from `styx-ai explore --outputs-only`)",
+        "--outputs-report",
+        help="Override path to outputs report (default: <out-root>/<package>/<tool>/outputs.md)",
     )
     author_p.add_argument(
         "--target", default="boutiques", choices=("boutiques",),
@@ -152,9 +154,7 @@ def main() -> None:
         "--max-retries", type=int, default=3,
         help="Retries when validation fails (default: 3)",
     )
-    author_p.add_argument("--model", default=None, help="LLM model override")
-    author_p.add_argument("--output", "-o", help="Output file path (default: stdout)")
-    author_p.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+    _add_common_args(author_p)
 
     # styx-ai wrap <tool> <repo>
     wrap_p = subparsers.add_parser(
@@ -181,56 +181,94 @@ def main() -> None:
     _configure_logging(args.verbose)
 
     if args.command == "scan":
-        result = asyncio.run(
-            explore_strategy(refresh=args.refresh, **_common_kwargs(args))
+        asyncio.run(
+            explore_strategy(
+                package=args.package,
+                repo_path=args.repo,
+                out_root=args.out_root,
+                refresh=args.refresh,
+                **_model_kwarg(args),
+            )
         )
+        print(f"Strategy cached at {strategy_dir(args.package, args.out_root)}", file=sys.stderr)
+
     elif args.command == "explore":
-        if args.outputs_only and not args.interface_report:
-            parser.error("--outputs-only requires --interface-report")
-        common = _common_kwargs(args)
+        dest = tool_dir(args.package, args.tool, args.out_root)
         if args.interface_only:
-            result = asyncio.run(explore_interface(tool_name=args.tool, **common))
+            report = asyncio.run(
+                explore_interface(
+                    tool_name=args.tool, repo_path=args.repo,
+                    package=args.package, out_root=args.out_root,
+                    **_model_kwarg(args),
+                )
+            )
+            _write_file(dest / "interface.md", report)
         elif args.outputs_only:
-            with open(args.interface_report, encoding="utf-8") as f:
-                interface_report = f.read()
-            result = asyncio.run(
+            iface_path = (
+                Path(args.interface_report)
+                if args.interface_report else dest / "interface.md"
+            )
+            if not iface_path.exists():
+                parser.error(f"interface report not found at {iface_path}")
+            interface_report = iface_path.read_text(encoding="utf-8")
+            report = asyncio.run(
                 explore_outputs(
-                    tool_name=args.tool, interface_report=interface_report, **common
+                    tool_name=args.tool, repo_path=args.repo,
+                    interface_report=interface_report,
+                    package=args.package, out_root=args.out_root,
+                    **_model_kwarg(args),
                 )
             )
+            _write_file(dest / "outputs.md", report)
         else:
-            result = asyncio.run(
+            iface, outs = asyncio.run(
                 explore(
-                    tool_name=args.tool,
+                    tool_name=args.tool, repo_path=args.repo,
+                    package=args.package, out_root=args.out_root,
                     refresh_strategy=args.refresh_strategy,
-                    **common,
+                    **_model_kwarg(args),
                 )
             )
+            _write_file(dest / "interface.md", iface)
+            _write_file(dest / "outputs.md", outs)
+
     elif args.command == "author":
-        with open(args.interface_report, encoding="utf-8") as f:
-            interface_report = f.read()
-        with open(args.outputs_report, encoding="utf-8") as f:
-            output_report = f.read()
-        kwargs: dict = {
-            "tool_name": args.tool,
-            "interface_report": interface_report,
-            "output_report": output_report,
-            "max_retries": args.max_retries,
-        }
-        if args.model:
-            kwargs["model"] = args.model
-        result = asyncio.run(author_boutiques(**kwargs))
+        dest = tool_dir(args.package, args.tool, args.out_root)
+        iface_path = (
+            Path(args.interface_report) if args.interface_report else dest / "interface.md"
+        )
+        outs_path = (
+            Path(args.outputs_report) if args.outputs_report else dest / "outputs.md"
+        )
+        for p in (iface_path, outs_path):
+            if not p.exists():
+                parser.error(f"report not found at {p}")
+        descriptor = asyncio.run(
+            author_boutiques(
+                tool_name=args.tool,
+                interface_report=iface_path.read_text(encoding="utf-8"),
+                output_report=outs_path.read_text(encoding="utf-8"),
+                max_retries=args.max_retries,
+                **_model_kwarg(args),
+            )
+        )
+        _write_file(dest / f"{args.target}.json", descriptor)
+
     elif args.command == "wrap":
-        wrap_kwargs: dict = _common_kwargs(args)
-        wrap_kwargs["tool_name"] = args.tool
-        wrap_kwargs["target"] = args.target
-        wrap_kwargs["refresh_strategy"] = args.refresh_strategy
-        wrap_kwargs["max_retries"] = args.max_retries
-        result = asyncio.run(wrap(**wrap_kwargs))
+        dest = asyncio.run(
+            wrap(
+                tool_name=args.tool, repo_path=args.repo,
+                package=args.package, target=args.target,
+                out_root=args.out_root,
+                refresh_strategy=args.refresh_strategy,
+                max_retries=args.max_retries,
+                **_model_kwarg(args),
+            )
+        )
+        print(f"Wrote artifacts under {dest}", file=sys.stderr)
+
     else:
         parser.error(f"unknown command: {args.command}")
-
-    _write_result(result, args.output)
 
 
 if __name__ == "__main__":

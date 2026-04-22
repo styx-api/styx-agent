@@ -86,7 +86,7 @@ async def explore_interface(
     repo_path: str | Path,
     package: str = "fsl",
     model: str = DEFAULT_MODEL,
-    cache_dir: str | Path | None = None,
+    out_root: str | Path | None = None,
 ) -> str:
     """Extract CLI input interface from source code.
 
@@ -94,7 +94,7 @@ async def explore_interface(
         Markdown report of inputs, constraints, and parsing approach.
     """
     repo_root = str(Path(repo_path).resolve())
-    system_prompt = INTERFACE_PROMPT + load_strategy(package, cache_dir)
+    system_prompt = INTERFACE_PROMPT + load_strategy(package, out_root)
 
     return await run_agent(
         system_prompt=system_prompt,
