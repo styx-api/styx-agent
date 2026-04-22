@@ -5,6 +5,9 @@
   "ants": [
     "https://github.com/ANTsX/ANTs.git"
   ],
+  "dcm2niix": [
+    "https://github.com/rordenlab/dcm2niix.git"
+  ],
   "freesurfer": [
     "https://github.com/freesurfer/freesurfer.git"
   ],
