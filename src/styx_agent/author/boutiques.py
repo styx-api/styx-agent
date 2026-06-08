@@ -312,8 +312,6 @@ For a hypothetical `image_convert` tool (remember: do NOT emit `name` or \
 """
 
 
-
-
 async def author_boutiques(
     tool_name: str,
     interface_report: str,

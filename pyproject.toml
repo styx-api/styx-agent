@@ -27,6 +27,9 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+# Most long lines are unavoidable LLM prompt/descriptor string literals; let the
+# formatter own code width instead of hard-wrapping prose.
+ignore = ["E501"]
 
 [tool.pyright]
 pythonVersion = "3.11"

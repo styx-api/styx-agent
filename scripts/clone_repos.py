@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Clone Styx-AI source repos")
+    parser = argparse.ArgumentParser(description="Clone styx-agent source repos")
     parser.add_argument("--package", help="Only clone this package (default: all)")
     parser.add_argument("--repos-dir", default="repos", help="Destination root (default: repos)")
     parser.add_argument("--registry", default="scripts/repos.json", help="Registry JSON path")

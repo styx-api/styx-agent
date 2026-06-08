@@ -1,4 +1,4 @@
-"""Styx AI: source-to-descriptor pipeline."""
+"""styx-agent: source-reading pipeline that generates Styx descriptors."""
 
 from __future__ import annotations
 

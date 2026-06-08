@@ -88,7 +88,10 @@ def main() -> None:
     _configure_stdout()
     _load_dotenv()
 
-    parser = argparse.ArgumentParser(prog="styx-agent", description="Styx AI tooling")
+    parser = argparse.ArgumentParser(
+        prog="styx-agent",
+        description="Source-reading agent pipeline that generates Styx descriptors",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # styx-agent scan <repo>

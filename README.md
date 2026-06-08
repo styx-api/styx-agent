@@ -73,8 +73,9 @@ uv run ruff check    # lint
 uv run pyright       # types
 ```
 
-See `CLAUDE.md` for architecture details and design decisions, and
-`docs/next-up.md` for planned work.
+Each agent lives in its own subpackage under `src/styx_agent/` (`scanner/`,
+`explorer/`, `author/`), with the shared LLM-facing filesystem tools in
+`tools/`. The Author emits Boutiques today; argtype is a planned target.
 
 ## License
 
