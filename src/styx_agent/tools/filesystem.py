@@ -72,9 +72,15 @@ def grep(pattern: str, repo_root: str, path: str = ".", glob_pattern: str | None
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=30, cwd=repo_root
         )
-        output = result.stdout
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return _python_grep(pattern, full, glob_pattern)
+    # grep exits 0 for matches, 1 for no matches, >=2 for a real error. A >=2
+    # here means the system grep is unusable for this query (e.g. an --include
+    # arg it doesn't parse, as on Windows) rather than a genuine miss, so fall
+    # back to the pure-Python implementation instead of reporting "No matches".
+    if result.returncode >= 2:
+        return _python_grep(pattern, full, glob_pattern)
+    output = result.stdout
     if not output:
         return "No matches found."
     # Make paths relative to repo root
@@ -113,7 +119,10 @@ def _resolve(path: str, repo_root: str) -> Path:
 
 def _python_grep(pattern: str, path: Path, glob_pattern: str | None) -> str:
     """Fallback grep in pure Python."""
-    regex = re.compile(pattern)
+    try:
+        regex = re.compile(pattern)
+    except re.error as e:
+        return f"Error: invalid regex {pattern!r}: {e}"
     results: list[str] = []
     file_pat = glob_pattern or "*"
     for filepath in path.rglob(file_pat):
