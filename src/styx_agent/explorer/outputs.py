@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from styx_ai.agent import DEFAULT_MODEL, run_agent
-from styx_ai.scanner import load_strategy
+from styx_agent.agent import DEFAULT_MODEL, run_agent
+from styx_agent.scanner import load_strategy
 
 OUTPUT_PROMPT = """\
 You are a source code researcher. You trace output file generation in source \

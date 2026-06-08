@@ -13,7 +13,7 @@ import sys
 
 import pytest
 
-from styx_ai.tools.filesystem import _resolve, list_directory, read_file
+from styx_agent.tools.filesystem import _resolve, list_directory, read_file
 
 
 @pytest.fixture

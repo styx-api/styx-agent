@@ -1,4 +1,4 @@
-"""Top-level CLI for styx-ai.
+"""Top-level CLI for styx-agent.
 
 All commands write to a conventional layout under ``--out-root`` (default
 ``output/``):
@@ -9,12 +9,12 @@ All commands write to a conventional layout under ``--out-root`` (default
 
 Subcommands:
 
-    styx-ai scan <repo>                           # per-package strategy scan
-    styx-ai explore <tool> <repo>                 # per-tool exploration (strategy + interface + outputs)
-    styx-ai explore <tool> <repo> --interface-only
-    styx-ai explore <tool> <repo> --outputs-only
-    styx-ai author <tool>                         # translate tool's cached reports into a descriptor
-    styx-ai wrap <tool> <repo>                    # full pipeline: scan → interface → outputs → author
+    styx-agent scan <repo>                           # per-package strategy scan
+    styx-agent explore <tool> <repo>                 # per-tool exploration (strategy + interface + outputs)
+    styx-agent explore <tool> <repo> --interface-only
+    styx-agent explore <tool> <repo> --outputs-only
+    styx-agent author <tool>                         # translate tool's cached reports into a descriptor
+    styx-agent wrap <tool> <repo>                    # full pipeline: scan → interface → outputs → author
 """
 
 from __future__ import annotations
@@ -26,11 +26,11 @@ import os
 import sys
 from pathlib import Path
 
-from styx_ai import wrap
-from styx_ai.author import author_boutiques
-from styx_ai.explorer import explore, explore_interface, explore_outputs
-from styx_ai.paths import strategy_dir, tool_dir
-from styx_ai.scanner import explore_strategy
+from styx_agent import wrap
+from styx_agent.author import author_boutiques
+from styx_agent.explorer import explore, explore_interface, explore_outputs
+from styx_agent.paths import strategy_dir, tool_dir
+from styx_agent.scanner import explore_strategy
 
 
 def _configure_stdout() -> None:
@@ -88,10 +88,10 @@ def main() -> None:
     _configure_stdout()
     _load_dotenv()
 
-    parser = argparse.ArgumentParser(prog="styx-ai", description="Styx AI tooling")
+    parser = argparse.ArgumentParser(prog="styx-agent", description="Styx AI tooling")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # styx-ai scan <repo>
+    # styx-agent scan <repo>
     scan_p = subparsers.add_parser(
         "scan",
         help="Produce a package-level strategy document (parsing + outputs + enumeration)",
@@ -103,7 +103,7 @@ def main() -> None:
     )
     _add_common_args(scan_p)
 
-    # styx-ai explore <tool> <repo>
+    # styx-agent explore <tool> <repo>
     explore_p = subparsers.add_parser(
         "explore",
         help="Run per-tool exploration (strategy + interface + outputs)",
@@ -132,7 +132,7 @@ def main() -> None:
     )
     _add_common_args(explore_p)
 
-    # styx-ai author <tool>
+    # styx-agent author <tool>
     author_p = subparsers.add_parser(
         "author",
         help="Translate a tool's cached reports into a descriptor",
@@ -156,7 +156,7 @@ def main() -> None:
     )
     _add_common_args(author_p)
 
-    # styx-ai wrap <tool> <repo>
+    # styx-agent wrap <tool> <repo>
     wrap_p = subparsers.add_parser(
         "wrap",
         help="Full pipeline: scan → interface → outputs → author",

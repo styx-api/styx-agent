@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from styx_ai.agent import DEFAULT_MODEL, run_agent
-from styx_ai.scanner._common import SCAN_PREAMBLE
+from styx_agent.agent import DEFAULT_MODEL, run_agent
+from styx_agent.scanner._common import SCAN_PREAMBLE
 
 OUTPUT_SCAN_PROMPT = SCAN_PREAMBLE + """\
 

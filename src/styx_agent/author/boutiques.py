@@ -9,8 +9,8 @@ import re
 
 import litellm
 
-from styx_ai.agent import DEFAULT_MODEL
-from styx_ai.author.validator import SCHEMA_VERSION, validate
+from styx_agent.agent import DEFAULT_MODEL
+from styx_agent.author.validator import SCHEMA_VERSION, validate
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +89,21 @@ inputs to document the tool's internal default. `default-value` means \
 "override the wrapper-generated default" and is rarely appropriate. Put the \
 tool's internal default in the `description` instead (e.g. \
 `"Shrink factor (tool default: 4)"`).
+
+**CRITICAL RULE on completeness:** If the interface report enumerates multiple \
+allowed values, modes, formats, or sub-command variants for an input, reproduce \
+EVERY one in the descriptor (as `value-choices` entries or SubCommandType \
+variants) — never summarize, abbreviate, or emit a representative subset. If the \
+report lists N variants, the descriptor MUST contain all N, however long the list.
+
+**CRITICAL RULE on microsyntax — model structured values, don't flatten them.** An argument's value often has internal structure (a small regular grammar), not free text. Whenever the report documents such structure, reproduce it with the descriptor's structural constructs; never collapse it to a bare `String` (a structured value typed as `String` is a defect — it discards the validation/typing the wrapper exists to provide). Map the grammar to the format:
+- **Sequence of fields** (e.g. `[a,b,c]`, `a:b`): a SubCommand whose `command-line` encodes the literal delimiters, with one positional input per field — each typed, `optional: true` if it can be omitted (put its default in the field `description`).
+- **Alternation** — the value is one of several named, parameterized forms (e.g. `Foo[...]`, `Bar[...]`): a `type` that is a list of SubCommandTypes, one variant per form, each with its own `command-line` and inputs.
+- **Repetition** — a delimiter-separated list (e.g. `4x2x1`): `list: true` with the matching `list-separator`; repetition may nest inside a sequence field.
+
+Use `value-choices` ONLY for a simple enum — a choice among bare literal keywords with NO internal parameters. The moment a choice carries its own bracketed/delimited sub-fields (`Keyword[param,...]`), it is alternation → model it as a SubCommand variant. Reserve plain `String` for genuinely free-form values (paths, arbitrary text).
+
+**CRITICAL RULE on repeated argument groups.** When the report's control-flow section indicates several distinct arguments are supplied together and repeat as a unit (a stage / block — the i-th occurrence of each forms one logical group), model the group as a single repeated SubCommand (`list: true`) whose inputs are those arguments (each keeping its own flag) — NOT as independent `list: true` flags, which loses which value pairs with which. Only do this when the report establishes the correlation; genuinely independent repeatable flags stay separate.
 
 ## Type mapping from Explorer reports
 
@@ -376,7 +391,7 @@ async def _complete(messages: list[dict], model: str) -> str:
             response = await litellm.acompletion(
                 model=model,
                 messages=messages,
-                max_tokens=16384,
+                max_tokens=32768,
             )
             break
         except litellm.exceptions.RateLimitError:

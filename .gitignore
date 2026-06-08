@@ -16,8 +16,13 @@ dist/
 build/
 .venv/
 
-# Explorer output
+# Explorer output (incl. per-model experiment variants)
 output/
+output_*/
+
+# Caches
+.mypy_cache/
+.pytest_cache/
 
 # Personal scratch notes
 next-up.md

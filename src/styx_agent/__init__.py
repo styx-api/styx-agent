@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from styx_ai.agent import DEFAULT_MODEL
-from styx_ai.author import author_boutiques
-from styx_ai.explorer import explore_interface, explore_outputs
-from styx_ai.paths import tool_dir
-from styx_ai.scanner import explore_strategy
+from styx_agent.agent import DEFAULT_MODEL
+from styx_agent.author import author_boutiques
+from styx_agent.explorer import explore_interface, explore_outputs
+from styx_agent.paths import tool_dir
+from styx_agent.scanner import explore_strategy
 
 __all__ = ["wrap"]
 

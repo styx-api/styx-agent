@@ -11,6 +11,15 @@
   "freesurfer": [
     "https://github.com/freesurfer/freesurfer.git"
   ],
+  "catsurface": [
+    "https://github.com/ChristianGaser/CAT-Surface.git"
+  ],
+  "fmriprep": [
+    "https://github.com/nipreps/fmriprep.git"
+  ],
+  "petprep": [
+    "https://github.com/nipreps/petprep.git"
+  ],
   "fsl": [
     "https://git.fmrib.ox.ac.uk/fsl/CUDIMOT.git",
     "https://git.fmrib.ox.ac.uk/fsl/CUDIMOT_models.git",

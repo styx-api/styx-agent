@@ -6,7 +6,7 @@ Two agents, run in sequence by the ``explore`` orchestrator:
 - ``explore_outputs`` — traces output file generation (uses the interface
   report as context).
 
-The package-level strategy is produced by :mod:`styx_ai.scanner` and
+The package-level strategy is produced by :mod:`styx_agent.scanner` and
 auto-loaded into each agent's system prompt via ``load_strategy``.
 """
 
@@ -15,10 +15,10 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from styx_ai.agent import DEFAULT_MODEL
-from styx_ai.explorer.interface import INTERFACE_PROMPT, explore_interface
-from styx_ai.explorer.outputs import OUTPUT_PROMPT, explore_outputs
-from styx_ai.scanner import explore_strategy
+from styx_agent.agent import DEFAULT_MODEL
+from styx_agent.explorer.interface import INTERFACE_PROMPT, explore_interface
+from styx_agent.explorer.outputs import OUTPUT_PROMPT, explore_outputs
+from styx_agent.scanner import explore_strategy
 
 logger = logging.getLogger(__name__)
 

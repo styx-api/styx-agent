@@ -5,14 +5,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 
 import litellm
 
-from styx_ai.tools.filesystem import TOOL_DEFINITIONS, execute_tool
+from styx_agent.tools.filesystem import TOOL_DEFINITIONS, execute_tool
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini/gemini-2.5-flash"
+DEFAULT_MODEL = os.environ.get(
+    "STYX_AGENT_MODEL", "litellm_proxy/bedrock/us.anthropic.claude-sonnet-4-6"
+)
 MAX_TURNS = 40
 
 

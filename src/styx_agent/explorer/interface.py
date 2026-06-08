@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from styx_ai.agent import DEFAULT_MODEL, run_agent
-from styx_ai.scanner import load_strategy
+from styx_agent.agent import DEFAULT_MODEL, run_agent
+from styx_agent.scanner import load_strategy
 
 INTERFACE_PROMPT = """\
 You are a source code researcher. You explore source repositories and extract \
@@ -34,13 +34,28 @@ or unbounded list
 (by index), or other. For positional args, note whether the parser requires \
 them in a specific position (e.g. must come last because the parser loop \
 stops processing flags after it)
-- **Constraints** — value ranges, allowed choices, dependencies on other inputs
+- **Constraints** — value ranges, dependencies on other inputs, and **allowed \
+values**: when an input accepts one of a fixed/enumerated set of values, modes, \
+sub-commands, or formats, enumerate EVERY accepted value exactly as written in \
+the source — never summarize, abbreviate, or give only representative examples, \
+however long the list (a partial list of accepted values is a defect)
 - **Source snippet** — the code where this input is defined
 
 ### Constraints
 
 Mutual exclusions, dependencies between inputs, and argument ordering \
 requirements (e.g. positional args that must appear after all flags).
+
+### Control flow
+
+Beyond each input in isolation, describe how the parser consumes arguments — the command's grammar. Cover whatever applies (omit if it's just a flat list of independent flags):
+- **Repetition / grouping** — arguments that repeat *together* as a unit (one of each per block / stage / iteration), and how the i-th occurrences correlate. Distinguish this from independently-repeatable flags.
+- **Mode / alternation** — an argument whose value changes how *other* arguments are parsed, required, or interpreted (the command takes different shapes depending on it).
+- **Ordering** — required order of positionals; flags that must precede/follow others; any argument that terminates flag parsing (rest is positional).
+- **Conditional presence** — arguments required or valid only when another is set.
+- **Variable arity / loops** — where the parser iterates to consume an open-ended number of items.
+
+Where useful, sketch the structure as a small grammar (sequence / alternation / repetition).
 
 ## Report format
 
@@ -51,6 +66,7 @@ Write the report directly as markdown (do NOT wrap it in a code block):
 - `## Parsing approach` — parser used, source files, confidence level
 - `## Inputs` — for each input: all fields listed above
 - `## Constraints` — mutual exclusions, dependencies (omit if none)
+- `## Control flow` — the command's argument grammar: repetition/grouping, mode-switches, ordering, conditionals (omit if a flat list of independent flags)
 - `## Source files examined` — files you read
 - `## Uncertainties` — anything you could not determine confidently
 
@@ -69,6 +85,8 @@ code here
 - Quote help text verbatim when available.
 - Read ALL of each relevant source file. Page through large files with \
 offset/limit or use read_tail.
+- Capture enumerated value sets in full — if an option accepts many allowed \
+values/modes/sub-commands, record every one of them, not a representative subset.
 - Mark uncertainties explicitly rather than guessing.
 
 ## Output discipline

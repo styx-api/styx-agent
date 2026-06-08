@@ -13,11 +13,11 @@ import asyncio
 import logging
 from pathlib import Path
 
-from styx_ai.agent import DEFAULT_MODEL
-from styx_ai.paths import strategy_dir
-from styx_ai.scanner.enumeration import scan_enumeration
-from styx_ai.scanner.outputs import scan_outputs
-from styx_ai.scanner.parsing import scan_parsing
+from styx_agent.agent import DEFAULT_MODEL
+from styx_agent.paths import strategy_dir
+from styx_agent.scanner.enumeration import scan_enumeration
+from styx_agent.scanner.outputs import scan_outputs
+from styx_agent.scanner.parsing import scan_parsing
 
 logger = logging.getLogger(__name__)
 
