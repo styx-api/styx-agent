@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import sys
@@ -32,6 +33,7 @@ from styx_agent.author import author_boutiques
 from styx_agent.explorer import explore, explore_interface, explore_outputs
 from styx_agent.paths import strategy_dir, tool_dir
 from styx_agent.scanner import explore_strategy
+from styx_agent.toollist import read_tool_list
 from styx_agent.tools.filesystem import require_grep
 
 
@@ -188,9 +190,18 @@ def main() -> None:
         help="Campaign: wrap many tools into a timestamped run dir with stats",
     )
     wrap_all_p.add_argument("repo", help="Path to cloned source repository")
-    wrap_all_p.add_argument(
-        "--tools", required=True,
+    tools_src = wrap_all_p.add_mutually_exclusive_group(required=True)
+    tools_src.add_argument(
+        "--tools",
         help="Comma-separated tool names (e.g. 'bet,fast,flirt')",
+    )
+    tools_src.add_argument(
+        "--tools-file",
+        help=(
+            "Tool list source: a newline-delimited text file, a JSON file "
+            "(array of names / descriptor objects, or one descriptor), or a "
+            "directory of NiWrap descriptor .json files"
+        ),
     )
     wrap_all_p.add_argument(
         "--target", default="boutiques", choices=("boutiques",),
@@ -298,9 +309,17 @@ def main() -> None:
         print(f"Wrote artifacts under {dest}", file=sys.stderr)
 
     elif args.command == "wrap-all":
-        tools = [t.strip() for t in args.tools.split(",") if t.strip()]
+        if args.tools:
+            tools = [t.strip() for t in args.tools.split(",") if t.strip()]
+        else:
+            try:
+                tools = read_tool_list(args.tools_file)
+            except (OSError, ValueError, json.JSONDecodeError) as e:
+                parser.error(f"could not read --tools-file {args.tools_file!r}: {e}")
         if not tools:
-            parser.error("--tools must list at least one tool name")
+            parser.error("no tool names found in --tools / --tools-file")
+        print(f"Wrapping {len(tools)} tool(s): {', '.join(tools[:8])}"
+              f"{' …' if len(tools) > 8 else ''}", file=sys.stderr)
         now = datetime.now(UTC)
         run_id = now.strftime("%Y-%m-%dT%H-%M-%SZ")
         run_root = asyncio.run(
