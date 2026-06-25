@@ -31,6 +31,7 @@ from styx_agent.author import author_boutiques
 from styx_agent.explorer import explore, explore_interface, explore_outputs
 from styx_agent.paths import strategy_dir, tool_dir
 from styx_agent.scanner import explore_strategy
+from styx_agent.tools.filesystem import require_grep
 
 
 def _configure_stdout() -> None:
@@ -182,6 +183,7 @@ def main() -> None:
 
     args = parser.parse_args()
     _configure_logging(args.verbose)
+    require_grep()
 
     if args.command == "scan":
         asyncio.run(

@@ -3,12 +3,29 @@
 from __future__ import annotations
 
 import os
-import re
+import shutil
 import subprocess
 from pathlib import Path
 
 # Maximum bytes to return from file reads / grep results
 MAX_OUTPUT_BYTES = 30_000
+
+# We require a system `grep` (ships with Git on Windows; native on macOS/Linux).
+# It is far faster than a pure-Python scan and skips binary files with -I, so we
+# no longer carry a fallback. The path is resolved once; require_grep() fails
+# fast with a clear message if it is missing.
+_GREP = shutil.which("grep")
+GREP_TIMEOUT_S = 30
+
+
+def require_grep() -> None:
+    """Raise if no system ``grep`` is on PATH. Call once at CLI startup."""
+    if _GREP is None:
+        raise RuntimeError(
+            "styx-agent requires the `grep` command on PATH. It ships with Git "
+            "on Windows (C:\\Program Files\\Git\\usr\\bin) and is native on "
+            "macOS/Linux."
+        )
 
 
 def _truncate(text: str, limit: int = MAX_OUTPUT_BYTES) -> str:
@@ -66,27 +83,42 @@ def read_tail(path: str, repo_root: str, limit: int = 100) -> str:
 
 def grep(pattern: str, repo_root: str, path: str = ".", glob_pattern: str | None = None) -> str:
     """Search for a regex pattern in files. Returns matching lines with file:line prefixes."""
+    if _GREP is None:
+        return (
+            "Error: `grep` is not available on PATH. Install grep (it ships with "
+            "Git on Windows) to use this tool."
+        )
     full = _resolve(path, repo_root)
-    cmd = ["grep", "-rn", "--include", glob_pattern or "*", "-E", pattern, str(full)]
+    # -I skips binary files. Pass the pattern with -e so it can never be mistaken
+    # for a path, and only add --include for a *real* glob: a bare `*` is both
+    # pointless (grep already searches every file) and broken on Windows, where
+    # Git's MSYS runtime expands the lone `*` before grep sees it and shifts the
+    # arguments. The `--include=GLOB` form is a single token, so a specific glob
+    # like `*.cpp` never matches a filename and survives MSYS unexpanded.
+    cmd = [_GREP, "-rnI"]
+    if glob_pattern and glob_pattern != "*":
+        cmd.append(f"--include={glob_pattern}")
+    cmd += ["-e", pattern, str(full)]
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=30, cwd=repo_root
+            cmd, capture_output=True, text=True, timeout=GREP_TIMEOUT_S, cwd=repo_root
         )
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return _python_grep(pattern, full, glob_pattern)
-    # grep exits 0 for matches, 1 for no matches, >=2 for a real error. A >=2
-    # here means the system grep is unusable for this query (e.g. an --include
-    # arg it doesn't parse, as on Windows) rather than a genuine miss, so fall
-    # back to the pure-Python implementation instead of reporting "No matches".
-    if result.returncode >= 2:
-        return _python_grep(pattern, full, glob_pattern)
+    except subprocess.TimeoutExpired:
+        return (
+            f"Error: search timed out after {GREP_TIMEOUT_S}s. Narrow it with a "
+            "glob filter (e.g. '*.cpp') or a more specific path."
+        )
     output = result.stdout
-    if not output:
-        return "No matches found."
-    # Make paths relative to repo root
-    output = output.replace(str(repo_root) + os.sep, "")
-    output = output.replace(str(repo_root) + "/", "")
-    return _truncate(output)
+    if output:
+        # Make paths relative to repo root.
+        output = output.replace(str(repo_root) + os.sep, "").replace(str(repo_root) + "/", "")
+        return _truncate(output)
+    # No stdout: distinguish "no matches" (rc 1) from a real grep error (rc >= 2)
+    # so we surface genuine failures instead of masking them as "No matches".
+    if result.returncode >= 2:
+        detail = result.stderr.strip().splitlines()
+        return f"Error: grep failed: {detail[0] if detail else 'unknown error'}"
+    return "No matches found."
 
 
 def find_files(pattern: str, repo_root: str, path: str = ".") -> str:
@@ -115,31 +147,6 @@ def _resolve(path: str, repo_root: str) -> Path:
     if resolved != root and not resolved.is_relative_to(root):
         return root
     return resolved
-
-
-def _python_grep(pattern: str, path: Path, glob_pattern: str | None) -> str:
-    """Fallback grep in pure Python."""
-    try:
-        regex = re.compile(pattern)
-    except re.error as e:
-        return f"Error: invalid regex {pattern!r}: {e}"
-    results: list[str] = []
-    file_pat = glob_pattern or "*"
-    for filepath in path.rglob(file_pat):
-        if not filepath.is_file():
-            continue
-        try:
-            for i, line in enumerate(
-                filepath.read_text(encoding="utf-8", errors="replace").splitlines(), 1
-            ):
-                if regex.search(line):
-                    rel = filepath.relative_to(path)
-                    results.append(f"{rel}:{i}:{line}")
-                    if len(results) >= 500:
-                        return _truncate("\n".join(results))
-        except Exception:
-            continue
-    return "\n".join(results) if results else "No matches found."
 
 
 # OpenAI-style tool definitions (used by LiteLLM)
@@ -198,7 +205,9 @@ TOOL_DEFINITIONS = [
             "name": "grep",
             "description": (
                 "Search for a regex pattern in files. Returns matching lines with "
-                "file:line prefixes. Use glob to filter by file extension."
+                "file:line prefixes. Pass a glob (e.g. '*.cpp', '*.h') to filter by "
+                "file type — strongly recommended in large repos, since an "
+                "unfiltered search is slow and may time out."
             ),
             "parameters": {
                 "type": "object",
