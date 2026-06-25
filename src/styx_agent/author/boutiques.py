@@ -359,6 +359,7 @@ async def author_boutiques(
         raw = await _complete(messages, model)
         json_text = _extract_json(raw)
 
+        data = None  # bound for all paths; only read when errors_fmt is empty
         try:
             data = json.loads(json_text)
         except json.JSONDecodeError as e:
