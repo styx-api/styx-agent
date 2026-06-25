@@ -29,7 +29,7 @@ _BASE_INPUT_FIELDS = {"id", "name", "description", "value-key", "type", "optiona
 _FLAGGED_FIELDS = {"command-line-flag", "command-line-flag-separator"}
 _LIST_FIELDS = {"list", "list-separator", "min-list-entries", "max-list-entries"}
 _TYPE_FIELDS: dict[str, set[str]] = {
-    "File": {"mutable", "resolve-parent"},
+    "File": {"mutable", "resolve-parent", "media-types"},
     "String": {"value-choices", "default-value"},
     "Number": {"integer", "minimum", "maximum", "value-choices", "default-value"},
     "Flag": {"command-line-flag", "default-value"},
@@ -39,6 +39,7 @@ _OUTPUT_REQUIRED = {"id", "path-template"}
 _OUTPUT_ALLOWED = {
     "id", "name", "description", "path-template",
     "path-template-stripped-extensions", "path-template-fallback",
+    "media-types",
 }
 
 _SUBCOMMAND_ALLOWED = {"id", "name", "description", "command-line", "inputs", "output-files"}
@@ -239,6 +240,9 @@ def _check_input_primitive(
             path, f"min-list-entries ({n1}) > max-list-entries ({n2})"
         ))
 
+    if type_val == "File":
+        _check_media_types(inp, errors, path)
+
     for key in sorted(set(inp) - allowed):
         errors.append(ValidationError(
             f"{path}.{key}",
@@ -254,11 +258,35 @@ def _field_hint(key: str, type_val: str, is_flagged: bool, is_list: bool) -> str
         return "This field requires 'command-line-flag' to also be set."
     if key == "integer" and type_val != "Number":
         return "'integer' is only valid on Number inputs."
-    if key in {"mutable", "resolve-parent"} and type_val != "File":
+    if key in {"mutable", "resolve-parent", "media-types"} and type_val != "File":
         return f"'{key}' is only valid on File inputs."
     if key == "value-choices" and type_val not in ("String", "Number"):
         return "'value-choices' is valid on String or Number inputs only."
     return None
+
+
+def _check_media_types(obj: dict, errors: list[ValidationError], path: str) -> None:
+    """Validate the optional ``media-types`` field on File inputs / output-files.
+
+    It is metadata describing the file format(s) the input accepts or the output
+    produces, for downstream consumers (it does not affect the command line).
+    """
+    mt = obj.get("media-types")
+    if mt is None:
+        return
+    if not isinstance(mt, list) or not mt:
+        errors.append(ValidationError(
+            f"{path}.media-types",
+            "if present, 'media-types' must be a non-empty array of strings",
+            hint='e.g. ["application/x-nifti", "application/gzip"]. Omit it entirely if unknown.',
+        ))
+        return
+    for j, m in enumerate(mt):
+        if not isinstance(m, str) or not m.strip():
+            errors.append(ValidationError(
+                f"{path}.media-types[{j}]",
+                f"each media type must be a non-empty string, got {m!r}",
+            ))
 
 
 def _check_input_subcommand(
@@ -377,6 +405,8 @@ def _check_output_file(out: Any, errors: list[ValidationError], path: str) -> No
             "Output files do not accept 'optional' in Styx-v1",
             hint="If the file is conditionally produced, move it inside the relevant SubCommand branch's 'output-files'.",
         ))
+
+    _check_media_types(out, errors, path)
 
     for key in sorted(set(out) - _OUTPUT_ALLOWED - {"optional"}):
         errors.append(ValidationError(f"{path}.{key}", f"field '{key}' not allowed on output-files"))

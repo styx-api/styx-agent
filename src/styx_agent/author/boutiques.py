@@ -80,6 +80,8 @@ metadata. Only with `list: true`.
 - `minimum`, `maximum` — bounds for Number inputs.
 - `integer` — `true` for int Numbers, `false` for float Numbers. Required \
 on Number inputs.
+- `media-types` — File inputs ONLY. Array of media-type strings naming the \
+file format(s) the input accepts (see "Media types" below). Optional metadata.
 
 **CRITICAL RULE on `default-value`:** Do NOT set `default-value` on optional \
 inputs to document the tool's internal default. `default-value` means \
@@ -131,6 +133,8 @@ Optional:
 referenced File input's value BEFORE substitution, e.g. `[".nii.gz", ".nii"]`.
 - `path-template-fallback` — fallback string used if a referenced input is \
 optional and unset.
+- `media-types` — array of media-type strings naming the format(s) of the \
+produced file (see "Media types" below). Optional metadata.
 
 **Do NOT put `optional` on an output-file.** Styx-v1 does not allow it. If \
 an output is conditionally produced, model the condition by placing the \
@@ -138,6 +142,22 @@ output-file inside the relevant SubCommand branch's `output-files`.
 
 Every `path-template` must be unique across output-files. Paths must NOT \
 contain `< > : " \\ | ? *`.
+
+## Media types (optional metadata)
+
+File inputs and output-files MAY carry a `media-types` array describing the \
+file format(s), for downstream consumers. It is pure metadata — it NEVER \
+affects the command line. Infer it from the file extensions in the reports; \
+OMIT the field entirely when the format is unknown or generic. Prefer an IANA \
+type where one exists, otherwise an `application/x-<format>` vendor string. \
+Common conventions:
+- `.nii` / `.nii.gz` → `["application/x-nifti"]`
+- `.gii` → `["application/x-gifti"]`; `.mgz` / `.mgh` → `["application/x-mgh"]`
+- `.vtk` → `["model/vtk"]`
+- `+orig.HEAD` → `["application/x-afni-head"]`; `+orig.BRIK` → `["application/x-afni-brik"]`
+- `.1D` / `.txt` → `["text/plain"]`; `.tsv` → `["text/tab-separated-values"]`; \
+`.json` → `["application/json"]`
+- `.mat` → `["application/x-matlab-data"]`; `.h5` / `.hdf5` → `["application/x-hdf5"]`
 
 ## Subcommands — two distinct uses
 
@@ -274,9 +294,10 @@ For a hypothetical `image_convert` tool (remember: do NOT emit `name` or \
     {
       "id": "input_file",
       "name": "Input image",
-      "description": "Image file to convert.",
+      "description": "DICOM image to convert.",
       "type": "File",
-      "value-key": "[INPUT]"
+      "value-key": "[INPUT]",
+      "media-types": ["application/dicom"]
     },
     {
       "id": "output_file",
@@ -302,7 +323,8 @@ For a hypothetical `image_convert` tool (remember: do NOT emit `name` or \
     {
       "id": "converted_image",
       "name": "Converted image",
-      "path-template": "[OUTPUT]"
+      "path-template": "[OUTPUT].nii.gz",
+      "media-types": ["application/x-nifti"]
     }
   ]
 }
