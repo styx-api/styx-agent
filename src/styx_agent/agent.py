@@ -80,6 +80,43 @@ def _add_usage(response, prompt_tokens: int, completion_tokens: int) -> tuple[in
     return prompt_tokens, completion_tokens
 
 
+_DEFAULT_TOOL_RESULT_BUDGET = 60_000
+_ELIDED_MARKER = "[earlier tool output elided to save context]"
+
+
+def _tool_result_budget() -> int:
+    """Char budget for retained tool-result content; 0 disables compaction."""
+    return int(os.environ.get("STYX_AGENT_TOOL_RESULT_BUDGET", str(_DEFAULT_TOOL_RESULT_BUDGET)))
+
+
+def _compact_tool_results(messages: list[dict], budget: int) -> None:
+    """Stub old tool-result content so it isn't re-sent every turn.
+
+    Tool results (file reads, greps) otherwise accumulate and get re-billed once
+    per remaining turn, making a long tracing run grow ~quadratically in tokens.
+    Walking newest-first, the most recent results are kept in full up to
+    ``budget`` characters; older ones have their content replaced by a short
+    stub. Only ``tool`` messages are touched — the system prompt, the task, and
+    the agent's own assistant turns (where its findings live) are untouched, and
+    the stub names nothing it can't re-read from disk. Idempotent via the stub
+    sentinel; structure-preserving (content is shortened, messages never removed,
+    so each result still pairs with its assistant ``tool_call_id``).
+    """
+    if budget <= 0:
+        return
+    used = 0
+    for msg in reversed(messages):
+        if msg.get("role") != "tool":
+            continue
+        content = msg.get("content") or ""
+        if content.startswith(_ELIDED_MARKER):
+            continue
+        if used + len(content) <= budget:
+            used += len(content)
+        else:
+            msg["content"] = f"{_ELIDED_MARKER} ({len(content)} chars)"
+
+
 async def run_agent(
     system_prompt: str,
     user_message: str,
@@ -94,6 +131,7 @@ async def run_agent(
         {"role": "user", "content": user_message},
     ]
     call_model, extra_kwargs = resolve_model(model)
+    budget = _tool_result_budget()
     start = time.monotonic()
     prompt_tokens = completion_tokens = 0
 
@@ -139,6 +177,8 @@ async def run_agent(
                     "content": result,
                 }
             )
+
+        _compact_tool_results(messages, budget)
 
         remaining = max_turns - turn - 1
         if 0 < remaining <= TURN_WARNING_THRESHOLD:
