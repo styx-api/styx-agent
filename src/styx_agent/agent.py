@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import time
 from typing import cast
 
@@ -53,21 +54,45 @@ def resolve_model(model: str) -> tuple[str, dict]:
     return model, {}
 
 
-async def _acompletion(label: str, **kwargs) -> litellm.ModelResponse:
-    """``litellm.acompletion`` with bounded exponential backoff on rate limits.
+# Transient errors worth backing off and retrying. Deterministic failures
+# (bad request, auth, not-found) are deliberately excluded — retrying those just
+# wastes calls. Backing off on these slows our request rate when the endpoint is
+# struggling instead of piling on, and rides out brief flukes.
+_RETRYABLE_ERRORS = (
+    litellm.exceptions.RateLimitError,
+    litellm.exceptions.InternalServerError,
+    litellm.exceptions.ServiceUnavailableError,
+    litellm.exceptions.APIConnectionError,
+    litellm.exceptions.Timeout,
+)
+_MAX_COMPLETION_ATTEMPTS = 6
+_BACKOFF_CAP_S = 120
 
-    We never request streaming, so the result is always a ``ModelResponse``; the
-    cast keeps that knowledge in one place instead of at every call site.
+
+async def _acompletion(label: str, **kwargs) -> litellm.ModelResponse:
+    """``litellm.acompletion`` with bounded, jittered exponential backoff.
+
+    Retries only transient errors (rate limits, 5xx, timeouts, connection drops),
+    never deterministic ones. Each retry waits longer, so a struggling endpoint
+    sees our request rate fall rather than rise; jitter keeps concurrent agents
+    from retrying in lockstep. Attempts are bounded: on a sustained outage we give
+    up — the caller records the tool as failed and the campaign continues —
+    instead of hammering a downed endpoint forever. We never stream, so the result
+    is always a ``ModelResponse``; the cast keeps that in one place.
     """
-    for attempt in range(5):
+    for attempt in range(_MAX_COMPLETION_ATTEMPTS):
         try:
             return cast(litellm.ModelResponse, await litellm.acompletion(**kwargs))
-        except litellm.exceptions.RateLimitError:
-            wait = min(2 ** attempt * 10, 60)
-            logger.warning(f"[{label}] rate limited, waiting {wait}s (attempt {attempt + 1}/5)")
-            await asyncio.sleep(wait)
-            if attempt == 4:
+        except _RETRYABLE_ERRORS as e:
+            if attempt == _MAX_COMPLETION_ATTEMPTS - 1:
                 raise
+            base = min(2 ** attempt * 5, _BACKOFF_CAP_S)
+            wait = base + random.uniform(0, base * 0.25)  # jitter desynchronizes retries
+            logger.warning(
+                f"[{label}] {type(e).__name__}; backing off {wait:.0f}s "
+                f"(attempt {attempt + 1}/{_MAX_COMPLETION_ATTEMPTS})"
+            )
+            await asyncio.sleep(wait)
     raise RuntimeError(f"[{label}] exhausted completion retries")  # pragma: no cover
 
 
