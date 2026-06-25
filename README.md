@@ -36,13 +36,16 @@ uv sync
 Create a `.env` (gitignored) with your LLM provider credentials:
 
 ```bash
-GEMINI_API_KEY=...
+NEURODESK_KEY=...            # default provider (https://llm.neurodesk.org)
+# Optional — only needed if you point STYX_AGENT_MODEL at another provider:
 LITELLM_PROXY_API_BASE=...
 LITELLM_PROXY_API_KEY=...
 ```
 
-The model is overridable via `STYX_AGENT_MODEL`; it defaults to
-`litellm_proxy/bedrock/us.anthropic.claude-sonnet-4-6`.
+The model defaults to `neurodesk/kimi-k2.7` (Neurodesk's OpenAI-compatible
+gateway, authenticated with `NEURODESK_KEY`). Override it with `STYX_AGENT_MODEL`
+or `--model` — any LiteLLM model string works (e.g. `neurodesk/qwen3`,
+`litellm_proxy/bedrock/us.anthropic.claude-sonnet-4-6`).
 
 ## Usage
 
