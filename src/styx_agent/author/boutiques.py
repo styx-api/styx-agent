@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
 
-import litellm
-
-from styx_agent.agent import DEFAULT_MODEL
+from styx_agent.agent import DEFAULT_MODEL, _acompletion, resolve_model
 from styx_agent.author.validator import SCHEMA_VERSION, validate
 
 logger = logging.getLogger(__name__)
@@ -384,20 +381,14 @@ async def author_boutiques(
 
 
 async def _complete(messages: list[dict], model: str) -> str:
-    for attempt in range(5):
-        try:
-            response = await litellm.acompletion(
-                model=model,
-                messages=messages,
-                max_tokens=32768,
-            )
-            break
-        except litellm.exceptions.RateLimitError:
-            wait = min(2 ** attempt * 10, 60)
-            logger.warning(f"[author] rate limited, waiting {wait}s")
-            await asyncio.sleep(wait)
-            if attempt == 4:
-                raise
+    call_model, extra_kwargs = resolve_model(model)
+    response = await _acompletion(
+        "author",
+        model=call_model,
+        messages=messages,
+        max_tokens=32768,
+        **extra_kwargs,
+    )
     return response.choices[0].message.content or ""
 
 
