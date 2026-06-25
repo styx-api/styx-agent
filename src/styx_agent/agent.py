@@ -65,35 +65,51 @@ _RETRYABLE_ERRORS = (
     litellm.exceptions.APIConnectionError,
     litellm.exceptions.Timeout,
 )
-_MAX_COMPLETION_ATTEMPTS = 6
-_BACKOFF_CAP_S = 120
+_BACKOFF_CAP_S = 600  # cap backoff at ~10 min so a long outage is polled gently
+_DEFAULT_MAX_RETRY_SECONDS = 24 * 3600  # keep retrying a single call for up to this long
+
+
+def _max_retry_seconds() -> float:
+    """Total time to keep retrying one call before giving up; ``<= 0`` = forever.
+
+    Generous by default so an unattended overnight/weekend run survives a
+    multi-hour endpoint outage. Override with ``STYX_AGENT_MAX_RETRY_SECONDS``.
+    """
+    return float(os.environ.get("STYX_AGENT_MAX_RETRY_SECONDS", str(_DEFAULT_MAX_RETRY_SECONDS)))
 
 
 async def _acompletion(label: str, **kwargs) -> litellm.ModelResponse:
-    """``litellm.acompletion`` with bounded, jittered exponential backoff.
+    """``litellm.acompletion`` with jittered exponential backoff on transient errors.
 
     Retries only transient errors (rate limits, 5xx, timeouts, connection drops),
-    never deterministic ones. Each retry waits longer, so a struggling endpoint
-    sees our request rate fall rather than rise; jitter keeps concurrent agents
-    from retrying in lockstep. Attempts are bounded: on a sustained outage we give
-    up — the caller records the tool as failed and the campaign continues —
-    instead of hammering a downed endpoint forever. We never stream, so the result
-    is always a ``ModelResponse``; the cast keeps that in one place.
+    never deterministic ones. Backoff grows to a ~10 min cap and keeps going for up
+    to ``STYX_AGENT_MAX_RETRY_SECONDS`` (default 24h; 0 = forever), so a single
+    multi-hour outage during an unattended run is ridden out rather than failing
+    the tool. Each wait slows our request rate while the endpoint struggles; jitter
+    desynchronizes concurrent agents. On a permanent outage the window eventually
+    elapses and we give up (caller records the tool failed, campaign continues).
+    We never stream, so the result is always a ``ModelResponse``.
     """
-    for attempt in range(_MAX_COMPLETION_ATTEMPTS):
+    window = _max_retry_seconds()
+    deadline = None if window <= 0 else time.monotonic() + window
+    attempt = 0
+    while True:
         try:
             return cast(litellm.ModelResponse, await litellm.acompletion(**kwargs))
         except _RETRYABLE_ERRORS as e:
-            if attempt == _MAX_COMPLETION_ATTEMPTS - 1:
-                raise
             base = min(2 ** attempt * 5, _BACKOFF_CAP_S)
             wait = base + random.uniform(0, base * 0.25)  # jitter desynchronizes retries
+            attempt += 1
+            if deadline is not None and time.monotonic() + wait > deadline:
+                logger.warning(
+                    f"[{label}] {type(e).__name__}: retry window exhausted after "
+                    f"{attempt} attempt(s), giving up"
+                )
+                raise
             logger.warning(
-                f"[{label}] {type(e).__name__}; backing off {wait:.0f}s "
-                f"(attempt {attempt + 1}/{_MAX_COMPLETION_ATTEMPTS})"
+                f"[{label}] {type(e).__name__}; backing off {wait:.0f}s (attempt {attempt})"
             )
             await asyncio.sleep(wait)
-    raise RuntimeError(f"[{label}] exhausted completion retries")  # pragma: no cover
 
 
 def _add_usage(response, prompt_tokens: int, completion_tokens: int) -> tuple[int, int]:

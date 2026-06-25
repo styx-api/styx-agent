@@ -29,8 +29,9 @@ def test_retries_transient_then_succeeds(monkeypatch):
     assert calls["n"] == 3
 
 
-def test_gives_up_after_max_attempts(monkeypatch):
+def test_gives_up_when_retry_window_exhausted(monkeypatch):
     monkeypatch.setattr(agent.asyncio, "sleep", _noop)
+    monkeypatch.setenv("STYX_AGENT_MAX_RETRY_SECONDS", "0.1")  # first backoff already exceeds it
     calls = {"n": 0}
 
     async def always_down(**kwargs):
@@ -40,7 +41,16 @@ def test_gives_up_after_max_attempts(monkeypatch):
     monkeypatch.setattr(agent.litellm, "acompletion", always_down)
     with pytest.raises(litellm.exceptions.ServiceUnavailableError):
         asyncio.run(agent._acompletion("t"))
-    assert calls["n"] == agent._MAX_COMPLETION_ATTEMPTS  # bounded, no infinite hammering
+    assert calls["n"] == 1  # gave up rather than sleeping past the window
+
+
+def test_max_retry_seconds_env_override(monkeypatch):
+    monkeypatch.delenv("STYX_AGENT_MAX_RETRY_SECONDS", raising=False)
+    assert agent._max_retry_seconds() == agent._DEFAULT_MAX_RETRY_SECONDS
+    monkeypatch.setenv("STYX_AGENT_MAX_RETRY_SECONDS", "300")
+    assert agent._max_retry_seconds() == 300.0
+    monkeypatch.setenv("STYX_AGENT_MAX_RETRY_SECONDS", "0")  # 0 = retry forever
+    assert agent._max_retry_seconds() == 0.0
 
 
 def test_does_not_retry_deterministic_error(monkeypatch):
