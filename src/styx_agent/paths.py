@@ -27,3 +27,17 @@ def strategy_dir(package: str, root: str | Path | None = None) -> Path:
 
 def tool_dir(package: str, tool: str, root: str | Path | None = None) -> Path:
     return package_dir(package, root) / tool
+
+
+def runs_dir(root: str | Path | None = None) -> Path:
+    """Directory holding timestamped campaign runs: ``<out_root>/runs/``."""
+    return out_root(root) / "runs"
+
+
+def run_dir(run_id: str, root: str | Path | None = None) -> Path:
+    """A single campaign run's root: ``<out_root>/runs/<run_id>/``.
+
+    The usual ``<package>/<tool>/`` artifact tree lives under this, so the
+    scanner's per-package strategy cache is still shared across tools in the run.
+    """
+    return runs_dir(root) / run_id

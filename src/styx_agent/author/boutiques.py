@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 
-from styx_agent.agent import DEFAULT_MODEL, _acompletion, resolve_model
+from styx_agent.agent import DEFAULT_MODEL, _acompletion, _add_usage, resolve_model
 from styx_agent.author.validator import SCHEMA_VERSION, validate
+from styx_agent.telemetry import AgentStat, record_agent
 
 logger = logging.getLogger(__name__)
 
@@ -354,56 +356,67 @@ async def author_boutiques(
         {"role": "user", "content": user_message},
     ]
 
-    for attempt in range(max_retries + 1):
-        logger.info(f"[author] attempt {attempt + 1}/{max_retries + 1}")
-        raw = await _complete(messages, model)
-        json_text = _extract_json(raw)
+    start = time.monotonic()
+    prompt_tokens = completion_tokens = 0
+    attempts_used = 0
+    try:
+        for attempt in range(max_retries + 1):
+            attempts_used = attempt + 1
+            logger.info(f"[author] attempt {attempt + 1}/{max_retries + 1}")
+            raw, p, c = await _complete(messages, model)
+            prompt_tokens += p
+            completion_tokens += c
+            json_text = _extract_json(raw)
 
-        data = None  # bound for all paths; only read when errors_fmt is empty
-        try:
-            data = json.loads(json_text)
-        except json.JSONDecodeError as e:
-            errors_fmt = [f"output is not valid JSON: {e}"]
-        else:
-            if not isinstance(data, dict):
-                errors_fmt = ["descriptor must be a JSON object"]
+            data = None  # bound for all paths; only read when errors_fmt is empty
+            try:
+                data = json.loads(json_text)
+            except json.JSONDecodeError as e:
+                errors_fmt = [f"output is not valid JSON: {e}"]
             else:
-                data["name"] = tool_name
-                data["schema-version"] = SCHEMA_VERSION
-                errors = validate(data)
-                errors_fmt = [e.format() for e in errors]
+                if not isinstance(data, dict):
+                    errors_fmt = ["descriptor must be a JSON object"]
+                else:
+                    data["name"] = tool_name
+                    data["schema-version"] = SCHEMA_VERSION
+                    errors = validate(data)
+                    errors_fmt = [e.format() for e in errors]
 
-        if not errors_fmt:
-            logger.info("[author] descriptor valid")
-            return json.dumps(data, indent=2)
+            if not errors_fmt:
+                logger.info("[author] descriptor valid")
+                return json.dumps(data, indent=2)
 
-        if attempt == max_retries:
-            raise ValueError(
-                f"[author] descriptor still invalid after {max_retries} retries:\n"
-                + "\n".join(f"- {e}" for e in errors_fmt)
+            if attempt == max_retries:
+                raise ValueError(
+                    f"[author] descriptor still invalid after {max_retries} retries:\n"
+                    + "\n".join(f"- {e}" for e in errors_fmt)
+                )
+
+            logger.warning(
+                f"[author] {len(errors_fmt)} error(s), retrying:\n"
+                + "\n".join(f"  - {e}" for e in errors_fmt)
+            )
+            messages.append({"role": "assistant", "content": raw})
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "The descriptor above failed validation:\n\n"
+                        + "\n".join(f"- {e}" for e in errors_fmt)
+                        + "\n\nProduce a corrected descriptor. Output only JSON, "
+                        "no commentary."
+                    ),
+                }
             )
 
-        logger.warning(
-            f"[author] {len(errors_fmt)} error(s), retrying:\n"
-            + "\n".join(f"  - {e}" for e in errors_fmt)
-        )
-        messages.append({"role": "assistant", "content": raw})
-        messages.append(
-            {
-                "role": "user",
-                "content": (
-                    "The descriptor above failed validation:\n\n"
-                    + "\n".join(f"- {e}" for e in errors_fmt)
-                    + "\n\nProduce a corrected descriptor. Output only JSON, "
-                    "no commentary."
-                ),
-            }
-        )
-
-    raise RuntimeError("unreachable")
+        raise RuntimeError("unreachable")
+    finally:
+        record_agent(AgentStat(
+            "author", attempts_used, time.monotonic() - start, prompt_tokens, completion_tokens
+        ))
 
 
-async def _complete(messages: list[dict], model: str) -> str:
+async def _complete(messages: list[dict], model: str) -> tuple[str, int, int]:
     call_model, extra_kwargs = resolve_model(model)
     response = await _acompletion(
         "author",
@@ -412,7 +425,8 @@ async def _complete(messages: list[dict], model: str) -> str:
         max_tokens=32768,
         **extra_kwargs,
     )
-    return response.choices[0].message.content or ""
+    prompt_tokens, completion_tokens = _add_usage(response, 0, 0)
+    return response.choices[0].message.content or "", prompt_tokens, completion_tokens
 
 
 _FENCE_RE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$")

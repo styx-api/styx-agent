@@ -24,9 +24,10 @@ import asyncio
 import logging
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
-from styx_agent import wrap
+from styx_agent import wrap, wrap_all
 from styx_agent.author import author_boutiques
 from styx_agent.explorer import explore, explore_interface, explore_outputs
 from styx_agent.paths import strategy_dir, tool_dir
@@ -181,6 +182,30 @@ def main() -> None:
     )
     _add_common_args(wrap_p)
 
+    # styx-agent wrap-all <repo> --tools a,b,c
+    wrap_all_p = subparsers.add_parser(
+        "wrap-all",
+        help="Campaign: wrap many tools into a timestamped run dir with stats",
+    )
+    wrap_all_p.add_argument("repo", help="Path to cloned source repository")
+    wrap_all_p.add_argument(
+        "--tools", required=True,
+        help="Comma-separated tool names (e.g. 'bet,fast,flirt')",
+    )
+    wrap_all_p.add_argument(
+        "--target", default="boutiques", choices=("boutiques",),
+        help="Descriptor target format",
+    )
+    wrap_all_p.add_argument(
+        "--refresh-strategy", action="store_true",
+        help="Regenerate the package strategy even if a cached copy exists",
+    )
+    wrap_all_p.add_argument(
+        "--max-retries", type=int, default=3,
+        help="Author retries on validation failure (default: 3)",
+    )
+    _add_common_args(wrap_all_p)
+
     args = parser.parse_args()
     _configure_logging(args.verbose)
     require_grep()
@@ -271,6 +296,24 @@ def main() -> None:
             )
         )
         print(f"Wrote artifacts under {dest}", file=sys.stderr)
+
+    elif args.command == "wrap-all":
+        tools = [t.strip() for t in args.tools.split(",") if t.strip()]
+        if not tools:
+            parser.error("--tools must list at least one tool name")
+        now = datetime.now(UTC)
+        run_id = now.strftime("%Y-%m-%dT%H-%M-%SZ")
+        run_root = asyncio.run(
+            wrap_all(
+                tools=tools, repo_path=args.repo, run_id=run_id,
+                package=args.package, target=args.target,
+                out_root=args.out_root, max_retries=args.max_retries,
+                refresh_strategy=args.refresh_strategy,
+                started_at=now.isoformat(),
+                **_model_kwarg(args),
+            )
+        )
+        print(f"Run complete: {run_root}", file=sys.stderr)
 
     else:
         parser.error(f"unknown command: {args.command}")

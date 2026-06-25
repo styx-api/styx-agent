@@ -56,6 +56,9 @@ python scripts/clone_repos.py
 # Full pipeline for one tool: scan → interface → outputs → author
 styx-agent wrap <tool> <repo>
 
+# Campaign: wrap many tools into one timestamped run dir with stats + manifest
+styx-agent wrap-all <repo> --tools bet,fast,flirt [--package fsl]
+
 # Or run stages individually
 styx-agent scan <repo> [--package fsl] [--refresh]
 styx-agent explore <tool> <repo> [--package fsl]
@@ -67,6 +70,12 @@ Artifacts land under `--out-root` (default `output/`, gitignored):
     <out_root>/<package>/_strategy/{enumeration,parsing,outputs}.md
     <out_root>/<package>/<tool>/{interface,outputs}.md
     <out_root>/<package>/<tool>/boutiques.json
+
+`wrap-all` instead writes a self-contained, timestamped run with stats:
+
+    <out_root>/runs/<timestamp>/run.json        # params, provenance, aggregates
+    <out_root>/runs/<timestamp>/results.jsonl   # one row per tool (turns, tokens, validation)
+    <out_root>/runs/<timestamp>/<package>/<tool>/...  # artifacts + per-tool meta.json
 
 ## Development
 

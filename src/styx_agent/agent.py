@@ -6,10 +6,12 @@ import asyncio
 import json
 import logging
 import os
+import time
 from typing import cast
 
 import litellm
 
+from styx_agent.telemetry import AgentStat, record_agent
 from styx_agent.tools.filesystem import TOOL_DEFINITIONS, execute_tool
 
 logger = logging.getLogger(__name__)
@@ -69,6 +71,15 @@ async def _acompletion(label: str, **kwargs) -> litellm.ModelResponse:
     raise RuntimeError(f"[{label}] exhausted completion retries")  # pragma: no cover
 
 
+def _add_usage(response, prompt_tokens: int, completion_tokens: int) -> tuple[int, int]:
+    """Accumulate token usage from a completion response (usage may be absent)."""
+    usage = getattr(response, "usage", None)
+    if usage is not None:
+        prompt_tokens += getattr(usage, "prompt_tokens", 0) or 0
+        completion_tokens += getattr(usage, "completion_tokens", 0) or 0
+    return prompt_tokens, completion_tokens
+
+
 async def run_agent(
     system_prompt: str,
     user_message: str,
@@ -83,6 +94,8 @@ async def run_agent(
         {"role": "user", "content": user_message},
     ]
     call_model, extra_kwargs = resolve_model(model)
+    start = time.monotonic()
+    prompt_tokens = completion_tokens = 0
 
     for turn in range(max_turns):
         logger.info(f"[{label}] turn {turn + 1}/{max_turns}")
@@ -95,6 +108,7 @@ async def run_agent(
             max_tokens=16384,
             **extra_kwargs,
         )
+        prompt_tokens, completion_tokens = _add_usage(response, prompt_tokens, completion_tokens)
 
         if not response.choices:
             logger.warning(f"[{label}] empty response, retrying...")
@@ -104,6 +118,9 @@ async def run_agent(
         message = choice.message
 
         if not message.tool_calls:
+            record_agent(AgentStat(
+                label, turn + 1, time.monotonic() - start, prompt_tokens, completion_tokens
+            ))
             return message.content or ""
 
         messages.append(message.model_dump())
@@ -159,6 +176,10 @@ async def run_agent(
         max_tokens=16384,
         **extra_kwargs,
     )
+    prompt_tokens, completion_tokens = _add_usage(response, prompt_tokens, completion_tokens)
+    record_agent(AgentStat(
+        label, max_turns, time.monotonic() - start, prompt_tokens, completion_tokens
+    ))
     if response.choices:
         return response.choices[0].message.content or ""
     return ""
