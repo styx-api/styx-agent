@@ -50,8 +50,10 @@ or `--model` — any LiteLLM model string works (e.g. `neurodesk/qwen3`,
 ## Usage
 
 ```bash
-# Clone the source repos you want to wrap (registry: scripts/repos.json)
-python scripts/clone_repos.py
+# Clone the source repos you want to wrap, pinned to match each version's build.
+# Sources are read from the NiWrap version.json manifests (sibling ../niwrap checkout).
+python scripts/clone_repos.py                 # all packages, default version
+python scripts/clone_repos.py --package ants  # one package (+ its ITK dependency)
 
 # Full pipeline for one tool: scan → interface → outputs → author
 styx-agent wrap <tool> <repo>
