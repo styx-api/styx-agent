@@ -33,6 +33,21 @@ def test_json_single_descriptor(tmp_path):
     assert read_tool_list(p) == ["bet"]
 
 
+def test_niwrap_version_manifest_uses_apps_not_name(tmp_path):
+    # version.json's top-level "name" is the VERSION; tools live in "apps".
+    p = tmp_path / "version.json"
+    p.write_text(
+        json.dumps({
+            "name": "2.5.3",
+            "container": "antsx/ants:v2.5.3",
+            "apps": ["ANTS", "antsRegistration", "AddNoiseToImage"],
+            "executables": {"required": ["ANTS"], "ignored": ["foo.R"]},
+        }),
+        encoding="utf-8",
+    )
+    assert read_tool_list(p) == ["ANTS", "antsRegistration", "AddNoiseToImage"]
+
+
 def test_niwrap_descriptor_directory(tmp_path):
     d = tmp_path / "descriptors"
     d.mkdir()

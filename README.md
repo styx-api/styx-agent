@@ -58,9 +58,11 @@ styx-agent wrap <tool> <repo>
 
 # Campaign: wrap many tools into one timestamped run dir with stats + manifest
 styx-agent wrap-all <repo> --tools bet,fast,flirt [--package fsl]
-# ...or take the tool list from a file: newline-delimited .txt, a JSON array/
-# descriptor, or a directory of NiWrap descriptors (one <tool>.json per tool):
-styx-agent wrap-all <repo> --package fsl --tools-file path/to/descriptors/fsl/
+# ...or take the tool list from a file: a newline-delimited .txt, a JSON array/
+# descriptor, a NiWrap version manifest (its `apps` array), or a directory of
+# NiWrap descriptors. E.g. wrap every app in a NiWrap version:
+styx-agent wrap-all <repo> --package ants \
+  --tools-file path/to/niwrap/src/niwrap/ants/2.5.3/version.json
 
 # Or run stages individually
 styx-agent scan <repo> [--package fsl] [--refresh]
