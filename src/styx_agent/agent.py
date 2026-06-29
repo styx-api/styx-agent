@@ -69,6 +69,9 @@ _BACKOFF_CAP_S = 600  # cap backoff at ~10 min so a long outage is polled gently
 _DEFAULT_MAX_RETRY_SECONDS = 24 * 3600  # keep retrying a single call for up to this long
 
 
+_DEFAULT_REQUEST_TIMEOUT_S = 300  # per-call ceiling so a hung socket can't block forever
+
+
 def _max_retry_seconds() -> float:
     """Total time to keep retrying one call before giving up; ``<= 0`` = forever.
 
@@ -76,6 +79,18 @@ def _max_retry_seconds() -> float:
     multi-hour endpoint outage. Override with ``STYX_AGENT_MAX_RETRY_SECONDS``.
     """
     return float(os.environ.get("STYX_AGENT_MAX_RETRY_SECONDS", str(_DEFAULT_MAX_RETRY_SECONDS)))
+
+
+def _request_timeout() -> float:
+    """Per-request timeout (seconds); ``<= 0`` disables it.
+
+    Without a timeout a half-closed connection (server gone, client still reading)
+    blocks the call forever — and the retry backoff never fires, because it only
+    triggers on a raised exception. Bounding each call turns a silent hang into a
+    ``litellm.Timeout``, which IS retryable, so the backoff can ride it out. Set
+    via ``STYX_AGENT_REQUEST_TIMEOUT``.
+    """
+    return float(os.environ.get("STYX_AGENT_REQUEST_TIMEOUT", str(_DEFAULT_REQUEST_TIMEOUT_S)))
 
 
 async def _acompletion(label: str, **kwargs) -> litellm.ModelResponse:
@@ -92,6 +107,9 @@ async def _acompletion(label: str, **kwargs) -> litellm.ModelResponse:
     """
     window = _max_retry_seconds()
     deadline = None if window <= 0 else time.monotonic() + window
+    timeout = _request_timeout()
+    if timeout > 0:
+        kwargs.setdefault("timeout", timeout)
     attempt = 0
     while True:
         try:
@@ -158,6 +176,75 @@ def _compact_tool_results(messages: list[dict], budget: int) -> None:
             msg["content"] = f"{_ELIDED_MARKER} ({len(content)} chars)"
 
 
+# Token-based tool encoders (notably kimi-k2.7 via the Neurodesk vllm gateway)
+# emit tool calls as in-band special tokens. The endpoint's tool parser extracts
+# them into `message.tool_calls` — but only when a `tools=` schema is attached and
+# the parse succeeds. When it doesn't, the raw `<|tool_call…|>` tokens stay in
+# `message.content`; a loop that returns content whenever `tool_calls` is empty
+# would then persist that token soup as the agent's report. These guard against it.
+_TOOL_CALL_LEAK_MARKERS = ("<|tool_call", "tool_calls_section")
+
+
+def _looks_like_leaked_tool_call(content: str) -> bool:
+    """True if `content` carries raw tool-call tokens that must not become a report."""
+    return any(marker in content for marker in _TOOL_CALL_LEAK_MARKERS)
+
+
+def _strip_leaked_tool_calls(content: str) -> str:
+    """Drop any leaked tool-call token block, keeping the prose that precedes it."""
+    cut = min(
+        (content.find(m) for m in _TOOL_CALL_LEAK_MARKERS if m in content),
+        default=len(content),
+    )
+    return content[:cut].rstrip()
+
+
+async def _final_report(
+    label: str, call_model: str, messages: list[dict], extra_kwargs: dict
+) -> tuple[str, int, int]:
+    """Coax a clean prose final report, defending against leaked tool-call tokens.
+
+    Keeps `tools` attached with ``tool_choice="none"`` so the endpoint's tool-call
+    parser stays engaged (without a schema, kimi's tool tokens leak into content)
+    while forbidding further calls. If tokens still leak, re-prompt once, then strip
+    them as a last resort. Returns (report, prompt_tokens, completion_tokens).
+    """
+    prompt_tokens = completion_tokens = 0
+    content = ""
+    for attempt in range(2):
+        response = await _acompletion(
+            label,
+            model=call_model,
+            messages=messages,
+            tools=TOOL_DEFINITIONS,
+            tool_choice="none",
+            max_tokens=16384,
+            **extra_kwargs,
+        )
+        prompt_tokens, completion_tokens = _add_usage(
+            response, prompt_tokens, completion_tokens
+        )
+        if not response.choices:
+            return "", prompt_tokens, completion_tokens
+        content = response.choices[0].message.content or ""
+        if not _looks_like_leaked_tool_call(content):
+            return content, prompt_tokens, completion_tokens
+        logger.warning(
+            f"[{label}] final report leaked tool-call tokens; re-prompting "
+            f"(attempt {attempt + 1})"
+        )
+        messages.append(response.choices[0].message.model_dump())
+        messages.append({
+            "role": "user",
+            "content": (
+                "Your previous message contained raw tool-call tokens instead of a "
+                "report. You cannot call any tools now. Write the final report as "
+                "plain markdown prose only, with no tool-call syntax."
+            ),
+        })
+    return _strip_leaked_tool_calls(content), prompt_tokens, completion_tokens
+
+
 async def run_agent(
     system_prompt: str,
     user_message: str,
@@ -197,10 +284,30 @@ async def run_agent(
         message = choice.message
 
         if not message.tool_calls:
+            content = message.content or ""
+            # The model meant to call a tool but the endpoint failed to parse its
+            # tokens (they leaked into content). Don't persist that as the report —
+            # nudge it to retry the call or write a clean report, then continue.
+            if _looks_like_leaked_tool_call(content):
+                logger.warning(
+                    f"[{label}] turn {turn + 1}: tool-call tokens leaked into "
+                    "content; nudging and continuing"
+                )
+                messages.append(message.model_dump())
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Your previous message contained raw tool-call tokens that "
+                        "did not register as a tool call. Either call the tool again "
+                        "properly, or, if you are finished, write your final report "
+                        "as plain markdown with no tool-call syntax."
+                    ),
+                })
+                continue
             record_agent(AgentStat(
                 label, turn + 1, time.monotonic() - start, prompt_tokens, completion_tokens
             ))
-            return message.content or ""
+            return content
 
         messages.append(message.model_dump())
 
@@ -250,17 +357,12 @@ async def run_agent(
             ),
         }
     )
-    response = await _acompletion(
-        label,
-        model=call_model,
-        messages=messages,
-        max_tokens=16384,
-        **extra_kwargs,
+    report, fp_prompt, fp_completion = await _final_report(
+        label, call_model, messages, extra_kwargs
     )
-    prompt_tokens, completion_tokens = _add_usage(response, prompt_tokens, completion_tokens)
+    prompt_tokens += fp_prompt
+    completion_tokens += fp_completion
     record_agent(AgentStat(
         label, max_turns, time.monotonic() - start, prompt_tokens, completion_tokens
     ))
-    if response.choices:
-        return response.choices[0].message.content or ""
-    return ""
+    return report
