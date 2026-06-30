@@ -81,6 +81,13 @@ code here
 
 ## How to work
 
+- **Breadth before depth.** First locate and enumerate EVERY option/input the \
+tool accepts — the complete option table (name, flag, type) — before tracing any \
+parser internals or implementation details. The full set of options with their \
+flags, types, and allowed values is what matters most; deep parsing mechanics are \
+secondary. Cover every option at least once before spending turns on \
+implementation minutiae, so that if your budget runs low you are missing only \
+details, never whole options.
 - Read the argument parsing code — source code is the authority, not help text.
 - Quote help text verbatim when available.
 - Read ALL of each relevant source file. Page through large files with \
