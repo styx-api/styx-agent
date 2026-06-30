@@ -70,8 +70,12 @@ Optional:
 - `description` — quote verbatim help text from the interface report when \
 available. Use this to document the tool's internal default values too.
 - `optional` — default `false`. Set `true` if the user can omit the argument.
-- `command-line-flag` — e.g. `"-i"` or `"--input-image"`. REQUIRED for \
-`type: "Flag"`. Omit for purely positional args.
+- `command-line-flag` — e.g. `"--input-image"` (or `"-i"`). REQUIRED for \
+`type: "Flag"`. Omit for purely positional args. **Always prefer the long \
+`--flag` form when the interface report documents one** — long flags are \
+unambiguous, whereas short single-letter flags are easy to misassign (tools \
+reuse or collide on letters, e.g. the same letter bound to two options). Use \
+a short flag only when the option has no long form.
 - `command-line-flag-separator` — e.g. `"="` for `--flag=value`. Defaults \
 to a space.
 - `value-choices` — list of permitted values (for String or integer \
