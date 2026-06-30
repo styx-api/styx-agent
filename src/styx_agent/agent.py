@@ -18,7 +18,13 @@ from styx_agent.tools.filesystem import TOOL_DEFINITIONS, execute_tool
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = os.environ.get("STYX_AGENT_MODEL", "neurodesk/kimi-k2.7")
-MAX_TURNS = 40
+# Per-agent exploration budget. The biggest tools (antsRegistration et al.) have
+# dozens of options + a stage grammar that 40 single-file-read turns can't cover,
+# which forces a premature final report. Default raised to 60; override per-run
+# with STYX_AGENT_MAX_TURNS. Note: budget exhaustion is made *safe* by the honest
+# forced-final prompt below — a higher cap reduces how often we hit it, but the
+# anti-confabulation instruction is what prevents fabricated output when we do.
+MAX_TURNS = int(os.environ.get("STYX_AGENT_MAX_TURNS", "60"))
 # When this few tool-call turns remain, start telling the model its budget so it
 # can prioritize and converge on its own instead of being cut off mid-trace.
 TURN_WARNING_THRESHOLD = 5
@@ -352,8 +358,15 @@ async def run_agent(
             "role": "user",
             "content": (
                 "You have reached the exploration budget and may not call any more "
-                "tools. Produce your final report now using everything you have "
-                "gathered so far, and list any remaining uncertainties explicitly."
+                "tools. Write your final report now using ONLY what you have "
+                "actually verified by reading the source. Do NOT guess or invent "
+                "any detail — every option name, command-line flag, value choice, "
+                "output file, and `source:` file/line citation you include must be "
+                "something you genuinely read, never reconstructed from memory or "
+                "assumption. For anything you could not finish tracing, list it "
+                "explicitly under an 'Uncertainties' section instead of filling the "
+                "gap. A short, honest report limited to what you verified is far "
+                "more valuable than a complete but fabricated one."
             ),
         }
     )
