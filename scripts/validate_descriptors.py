@@ -62,8 +62,7 @@ def iter_inputs(node):
     """Yield every input object anywhere in the descriptor."""
     if isinstance(node, dict):
         if isinstance(node.get("inputs"), list):
-            for inp in node["inputs"]:
-                yield inp
+            yield from node["inputs"]
         for v in node.values():
             yield from iter_inputs(v)
     elif isinstance(node, list):
