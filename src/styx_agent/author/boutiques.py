@@ -57,6 +57,13 @@ Styx v1 schema (`extra="forbid"`).
 
 ## Input objects
 
+**Omit pure meta-flags.** Do not emit inputs for flags that only print \
+information and exit without affecting the tool's work — `--help`, `--version`, \
+`--usage`, and short aliases like `-h`. They are not functional arguments, even \
+though the parser accepts them. Include such a flag ONLY in the rare case where \
+the tool's actual behavior or output genuinely depends on it, not merely because \
+the interface report documented it.
+
 Required fields on every input:
 - `id` — alphanumeric + underscore, e.g. `"input_file"`. Used to generate \
 variable names.
