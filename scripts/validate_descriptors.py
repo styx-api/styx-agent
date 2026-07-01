@@ -33,6 +33,17 @@ from pathlib import Path
 _LEAK = re.compile(r"tool_call_begin|tool_calls_section|<\|tool_call")
 _VALUE_KEY = re.compile(r"\[[A-Za-z0-9_]+\]")
 _SOURCE_REF = re.compile(r"source:\s*([^\s:]+):(\d+)-(\d+)")
+_ID_TOKENS = re.compile(r"[^a-z0-9]+")
+
+
+def is_meta_flag(inp: dict) -> bool:
+    """True if this input is a --help / --version meta-flag (matches the stripper)."""
+    if not isinstance(inp, dict):
+        return False
+    if inp.get("command-line-flag") in ("--help", "--version"):
+        return True
+    tokens = _ID_TOKENS.split(str(inp.get("id", "")).lower())
+    return "help" in tokens or "version" in tokens
 
 
 def walk_command_contexts(node):
@@ -132,6 +143,7 @@ def main() -> None:
 
     leak_hits: list[str] = []
     struct_fail: dict[str, list[str]] = {}
+    meta_flag_hits: dict[str, list[str]] = {}
     cite_total = cite_valid = 0
     cite_bad: list[str] = []
     src_cache: dict = {}
@@ -152,6 +164,10 @@ def main() -> None:
         errs = check_structure(d)
         if errs:
             struct_fail[tool] = errs
+        # meta-flag warning (non-failing): --help/--version left in the descriptor
+        metas = [i.get("id", "?") for i in iter_inputs(d) if is_meta_flag(i)]
+        if metas:
+            meta_flag_hits[tool] = metas
         # 3. citations
         if source_root:
             t, v, bad = check_citations(f.parent, source_root, src_cache)
@@ -192,6 +208,14 @@ def main() -> None:
             print(f"PASS  citations: {cite_valid}/{cite_total} valid (100%)")
     else:
         print("SKIP  citations: pass --source <repo> to enable")
+
+    # non-failing warning: help/version meta-flags still present
+    if meta_flag_hits:
+        n_meta = sum(len(v) for v in meta_flag_hits.values())
+        print(f"WARN  meta-flags: {n_meta} --help/--version input(s) in {len(meta_flag_hits)} descriptor(s)"
+              f" — run scripts/strip_help_version.py")
+        for tool, metas in list(meta_flag_hits.items())[:10]:
+            print(f"        {tool}: {', '.join(metas)}")
 
     print()
     print("RESULT:", "PASS" if ok else "FAIL")
