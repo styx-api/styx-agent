@@ -1,0 +1,10 @@
+{
+  "name": "styx-agent-argtype-bridge",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "Node bridge: validate argtype via the styx compiler for styx-agent's author loop",
+  "dependencies": {
+    "@styx-api/core": "file:../../../styx/packages/core"
+  }
+}

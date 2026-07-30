@@ -7,6 +7,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from styx_agent.normalize import decode_source, to_ascii
+
 # Maximum bytes to return from file reads / grep results
 MAX_OUTPUT_BYTES = 30_000
 
@@ -52,7 +54,7 @@ def read_file(path: str, repo_root: str, offset: int = 0, limit: int = 500) -> s
     if not full.is_file():
         return f"Error: {path} is not a file"
     try:
-        lines = full.read_text(encoding="utf-8", errors="replace").splitlines()
+        lines = to_ascii(decode_source(full.read_bytes())).splitlines()
     except Exception as e:
         return f"Error reading {path}: {e}"
     selected = lines[offset : offset + limit]
@@ -69,7 +71,7 @@ def read_tail(path: str, repo_root: str, limit: int = 100) -> str:
     if not full.is_file():
         return f"Error: {path} is not a file"
     try:
-        lines = full.read_text(encoding="utf-8", errors="replace").splitlines()
+        lines = to_ascii(decode_source(full.read_bytes())).splitlines()
     except Exception as e:
         return f"Error reading {path}: {e}"
     start = max(0, len(lines) - limit)
@@ -112,7 +114,7 @@ def grep(pattern: str, repo_root: str, path: str = ".", glob_pattern: str | None
     if output:
         # Make paths relative to repo root.
         output = output.replace(str(repo_root) + os.sep, "").replace(str(repo_root) + "/", "")
-        return _truncate(output)
+        return _truncate(to_ascii(output))
     # No stdout: distinguish "no matches" (rc 1) from a real grep error (rc >= 2)
     # so we surface genuine failures instead of masking them as "No matches".
     if result.returncode >= 2:

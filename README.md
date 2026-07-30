@@ -19,8 +19,10 @@ source code → Scanner → Explorer → Author (+ Validator) → descriptor
   args are parsed, how outputs are produced) and caches them per package.
 - **Explorer** — per tool, an *interface* agent extracts inputs/constraints and
   an *outputs* agent traces output-file generation, each as a markdown report.
-- **Author** — translates the two reports into a descriptor (Boutiques today;
-  argtype planned), retrying against a Styx-v1 schema validator on failure.
+- **Author** — translates the two reports into a descriptor, retrying against a
+  validator on failure. Two targets: **Boutiques** (checked against a Styx-v1
+  schema validator) and **argtype** (the styx DSL, checked by compiling it with
+  the real styx compiler via a small Node bridge — see `tools/argtype_bridge/`).
 
 Agents are orchestrated via [LiteLLM](https://github.com/BerriAI/litellm), so any
 provider (Gemini, Claude, OpenAI, …) works.
@@ -69,8 +71,11 @@ styx-agent wrap-all <repo> --package ants \
 # Or run stages individually
 styx-agent scan <repo> [--package fsl] [--refresh]
 styx-agent explore <tool> <repo> [--package fsl]
-styx-agent author <tool> [--target boutiques] [--max-retries 3]
+styx-agent author <tool> [--target boutiques|argtype] [--max-retries 3]
 ```
+
+The `argtype` target validates by compiling with the styx compiler, so it needs
+Node and a built `@styx-api/core` — see [`tools/argtype_bridge/`](tools/argtype_bridge/).
 
 Artifacts land under `--out-root` (default `output/`, gitignored):
 
@@ -94,7 +99,7 @@ uv run pyright       # types
 
 Each agent lives in its own subpackage under `src/styx_agent/` (`scanner/`,
 `explorer/`, `author/`), with the shared LLM-facing filesystem tools in
-`tools/`. The Author emits Boutiques today; argtype is a planned target.
+`tools/`. The Author emits Boutiques and argtype.
 
 ## License
 

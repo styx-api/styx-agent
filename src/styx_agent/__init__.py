@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from styx_agent.agent import DEFAULT_MODEL
-from styx_agent.author import author_boutiques
+from styx_agent.author import TARGETS
 from styx_agent.explorer import explore_interface, explore_outputs
 from styx_agent.paths import run_dir, tool_dir
 from styx_agent.scanner import explore_strategy
@@ -57,17 +57,18 @@ async def wrap(
     (dest / "interface.md").write_text(interface_report, encoding="utf-8")
     (dest / "outputs.md").write_text(output_report, encoding="utf-8")
 
-    if target == "boutiques":
-        descriptor = await author_boutiques(
-            tool_name=tool_name,
-            interface_report=interface_report,
-            output_report=output_report,
-            model=model,
-            max_retries=max_retries,
-        )
-        (dest / "boutiques.json").write_text(descriptor, encoding="utf-8")
-    else:
-        raise ValueError(f"unknown author target: {target!r}")
+    try:
+        author_fn, extension = TARGETS[target]
+    except KeyError:
+        raise ValueError(f"unknown author target: {target!r}") from None
+    descriptor = await author_fn(
+        tool_name=tool_name,
+        interface_report=interface_report,
+        output_report=output_report,
+        model=model,
+        max_retries=max_retries,
+    )
+    (dest / f"{target}.{extension}").write_text(descriptor, encoding="utf-8")
 
     return dest
 
@@ -192,24 +193,35 @@ async def _wrap_one(
         "tokens": sum(s.total_tokens for s in stats),
         "agents": [s.to_dict() for s in stats],
         "errors": errors,
-        **_descriptor_summary(dest),
+        **_descriptor_summary(dest, target),
     }
     dest.mkdir(parents=True, exist_ok=True)
     _write_json(dest / "meta.json", {"run_id": run_id, "model": model, **record})
     return record
 
 
-def _descriptor_summary(dest: Path) -> dict:
+def _descriptor_summary(dest: Path, target: str = "boutiques") -> dict:
     """Cheap grounding/size proxies from a tool's artifacts."""
     summary: dict = {}
-    descriptor = dest / "boutiques.json"
-    if descriptor.exists():
-        try:
-            data = json.loads(descriptor.read_text(encoding="utf-8"))
-            summary["n_inputs"] = len(data.get("inputs") or [])
-            summary["n_outputs"] = len(data.get("output-files") or [])
-        except (json.JSONDecodeError, OSError):
-            pass
+    if target == "boutiques":
+        descriptor = dest / "boutiques.json"
+        if descriptor.exists():
+            try:
+                data = json.loads(descriptor.read_text(encoding="utf-8"))
+                summary["n_inputs"] = len(data.get("inputs") or [])
+                summary["n_outputs"] = len(data.get("output-files") or [])
+            except (json.JSONDecodeError, OSError):
+                pass
+    elif target == "argtype":
+        descriptor = dest / "argtype.argtype"
+        if descriptor.exists():
+            try:
+                from styx_agent.author import validate_argtype
+                summary["n_nodes"] = validate_argtype(
+                    descriptor.read_text(encoding="utf-8")
+                ).n_nodes
+            except Exception:
+                pass
     refs = 0
     for name in ("interface.md", "outputs.md"):
         report = dest / name
