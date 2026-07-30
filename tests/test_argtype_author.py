@@ -4,13 +4,21 @@ the Node bridge is unavailable, e.g. in CI without a local styx build)."""
 
 import asyncio
 import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 
+import styx_agent as sa
 from styx_agent.author import TARGETS
 from styx_agent.author import argtype as argtype_mod
+from styx_agent.author import argtype_validator as vmod
 from styx_agent.author.argtype import _strip_fences, author_argtype
 from styx_agent.author.argtype_validator import ArgtypeValidation, validate_argtype
+
+
+def _valid(src: str) -> ArgtypeValidation:
+    return ArgtypeValidation(ok=(src == "GOOD"), errors=[] if src == "GOOD" else ["boom-diagnostic"])
 
 # --- _strip_fences -------------------------------------------------------
 
@@ -54,19 +62,35 @@ def test_author_retries_on_invalid_then_succeeds(monkeypatch):
         calls["n"] += 1
         return ("BAD" if calls["n"] == 1 else "GOOD"), 10, 5
 
+    monkeypatch.setattr(argtype_mod, "ensure_bridge", lambda: None)
     monkeypatch.setattr(argtype_mod, "_complete", fake_complete)
-    monkeypatch.setattr(
-        argtype_mod, "validate_argtype",
-        lambda src: ArgtypeValidation(ok=(src == "GOOD"), errors=[] if src == "GOOD" else ["boom"]),
-    )
+    monkeypatch.setattr(argtype_mod, "validate_argtype", _valid)
     out = asyncio.run(author_argtype("t", "iface", "outs", max_retries=3))
     assert out == "GOOD" and calls["n"] == 2
+
+
+def test_author_feeds_diagnostic_back_on_retry(monkeypatch):
+    """The retry must actually append the failing diagnostic into the next prompt."""
+    seen: list[str] = []
+
+    async def fake_complete(messages, model):
+        seen.append("\n".join(m["content"] for m in messages))
+        return ("BAD" if len(seen) == 1 else "GOOD"), 10, 5
+
+    monkeypatch.setattr(argtype_mod, "ensure_bridge", lambda: None)
+    monkeypatch.setattr(argtype_mod, "_complete", fake_complete)
+    monkeypatch.setattr(argtype_mod, "validate_argtype", _valid)
+    out = asyncio.run(author_argtype("t", "iface", "outs", max_retries=3))
+    assert out == "GOOD"
+    # the second call's message history must carry the first attempt's diagnostic
+    assert "boom-diagnostic" in seen[1]
 
 
 def test_author_raises_after_max_retries(monkeypatch):
     async def fake_complete(messages, model):
         return "BAD", 10, 5
 
+    monkeypatch.setattr(argtype_mod, "ensure_bridge", lambda: None)
     monkeypatch.setattr(argtype_mod, "_complete", fake_complete)
     monkeypatch.setattr(
         argtype_mod, "validate_argtype",
@@ -74,6 +98,58 @@ def test_author_raises_after_max_retries(monkeypatch):
     )
     with pytest.raises(ValueError):
         asyncio.run(author_argtype("t", "iface", "outs", max_retries=1))
+
+
+def test_wrap_writes_target_extension(monkeypatch, tmp_path):
+    """wrap() must compose the descriptor filename as <target>.<ext> (argtype.argtype)."""
+    async def fake_strategy(**kw):
+        return None
+
+    async def fake_iface(*a, **k):
+        return "iface-report"
+
+    async def fake_outs(*a, **k):
+        return "outs-report"
+
+    async def fake_author(tool_name, interface_report, output_report, model, max_retries):
+        return "bet: seq(a: path)"
+
+    monkeypatch.setattr(sa, "explore_strategy", fake_strategy)
+    monkeypatch.setattr(sa, "explore_interface", fake_iface)
+    monkeypatch.setattr(sa, "explore_outputs", fake_outs)
+    monkeypatch.setattr(sa, "TARGETS", {"argtype": (fake_author, "argtype")})
+    dest = asyncio.run(sa.wrap("bet", "repo", package="fsl", target="argtype", out_root=tmp_path))
+    assert (dest / "argtype.argtype").read_text(encoding="utf-8").startswith("bet: seq")
+    assert not (dest / "argtype.json").exists()
+
+
+# --- validator: environment failures raise BridgeUnavailable (not compile errors) ---
+
+def test_validate_argtype_env_failure_raises_bridge_unavailable(monkeypatch):
+    """Empty stdout + nonzero exit (e.g. @styx-api/core missing) is an environment
+    failure — must raise BridgeUnavailable, not be reported as an invalid descriptor."""
+    class FakeProc:
+        stdout = ""
+        stderr = "Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@styx-api/core'"
+        returncode = 1
+
+    monkeypatch.setattr(vmod.shutil, "which", lambda _n: "node")
+    monkeypatch.setattr(vmod, "_bridge_path", lambda: Path("bridge.mjs"))
+    monkeypatch.setattr(vmod.subprocess, "run", lambda *a, **k: FakeProc())
+    with pytest.raises(vmod.BridgeUnavailable):
+        vmod.validate_argtype("bet: seq(a: path)")
+
+
+def test_validate_argtype_timeout_raises_bridge_unavailable(monkeypatch):
+    monkeypatch.setattr(vmod.shutil, "which", lambda _n: "node")
+    monkeypatch.setattr(vmod, "_bridge_path", lambda: Path("bridge.mjs"))
+
+    def boom(*a, **k):
+        raise subprocess.TimeoutExpired(cmd="node", timeout=60)
+
+    monkeypatch.setattr(vmod.subprocess, "run", boom)
+    with pytest.raises(vmod.BridgeUnavailable):
+        vmod.validate_argtype("bet: seq(a: path)")
 
 
 # --- bridge integration (skipped when Node/bridge unavailable) -----------

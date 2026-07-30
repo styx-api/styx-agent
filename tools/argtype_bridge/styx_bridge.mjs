@@ -52,13 +52,24 @@ async function main() {
     try {
       const out = generateArgtype(pr.expr, pr.meta);
       source = typeof out === "string" ? out : out?.source ?? null;
+      for (const w of out?.warnings ?? []) warnings.push(normDiag(w));
     } catch (e) {
       errors.push({ message: `generateArgtype failed: ${e?.message || e}` });
     }
-    process.stdout.write(JSON.stringify({ ...base, source }));
+    process.stdout.write(JSON.stringify({ ...base, ok: errors.length === 0, source }));
   } else {
-    process.stdout.write(JSON.stringify({ ...base, n_nodes: 0 }));
+    process.stdout.write(JSON.stringify({ ...base, n_nodes: countNodes(pr.expr) }));
   }
+}
+
+function countNodes(expr) {
+  if (!expr || typeof expr !== "object") return 0;
+  let n = 1;
+  const a = expr.attrs ?? {};
+  if (Array.isArray(a.nodes)) for (const c of a.nodes) n += countNodes(c);
+  if (Array.isArray(a.alts)) for (const c of a.alts) n += countNodes(c);
+  if (a.node) n += countNodes(a.node);
+  return n;
 }
 
 main().catch((e) => {

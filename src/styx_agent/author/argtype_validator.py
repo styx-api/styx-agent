@@ -63,37 +63,71 @@ def _format_diag(d: dict) -> str:
 def validate_argtype(source: str) -> ArgtypeValidation:
     """Compile ``source`` as argtype via the styx bridge; return diagnostics.
 
-    Raises ``BridgeUnavailable`` if Node or the bridge script is missing (a hard
-    dependency of the argtype target). A malformed bridge response is surfaced as
-    a single error so the author loop still gets actionable feedback.
+    Confirms the document parses and lowers to the Styx IR. It does NOT resolve
+    output-template references, so a dangling ``{name}`` in a ``.output(...)`` is
+    not caught here (that surfaces later, at codegen).
+
+    Raises ``BridgeUnavailable`` for an *environment* failure — Node or the bridge
+    script missing, its dependencies not installed/built, or the call timing out —
+    so the caller can distinguish a broken toolchain from an invalid descriptor
+    (rather than feeding a Node stack trace back to the LLM as a "compile error").
+    A malformed but non-empty bridge response is surfaced as a single error so the
+    author loop still gets actionable feedback.
     """
     node = shutil.which("node")
     if node is None:
         raise BridgeUnavailable("`node` not found on PATH; the argtype target requires Node.js.")
     bridge = _bridge_path()
 
-    proc = subprocess.run(
-        [node, str(bridge)],
-        input=source,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        timeout=60,
-    )
-    out = proc.stdout.strip()
-    if not out:
-        return ArgtypeValidation(
-            ok=False,
-            errors=[f"argtype bridge produced no output (exit {proc.returncode}): {proc.stderr.strip()}"],
+    try:
+        proc = subprocess.run(
+            [node, str(bridge)],
+            input=source,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
         )
+    except subprocess.TimeoutExpired as e:
+        raise BridgeUnavailable(f"argtype bridge timed out after {e.timeout}s") from e
+
+    out = proc.stdout.strip()
+    # The bridge always prints JSON and exits 0 — even on a compile *or* internal
+    # error (its own try/catch). Empty stdout with a nonzero exit means Node failed
+    # to start the script at all (e.g. `@styx-api/core` not installed/built): an
+    # environment failure, not a descriptor defect.
+    if not out:
+        if proc.returncode != 0:
+            raise BridgeUnavailable(
+                f"argtype bridge failed to run (exit {proc.returncode}); is @styx-api/core "
+                f"installed in tools/argtype_bridge? stderr: {proc.stderr.strip()[:400]}"
+            )
+        return ArgtypeValidation(ok=False, errors=["argtype bridge produced no output"])
+
     try:
         data = json.loads(out)
-    except json.JSONDecodeError as e:
-        return ArgtypeValidation(ok=False, errors=[f"argtype bridge returned non-JSON: {e}: {out[:200]}"])
+        return ArgtypeValidation(
+            ok=bool(data.get("ok")),
+            errors=[_format_diag(d) for d in data.get("errors", [])],
+            warnings=[_format_diag(d) for d in data.get("warnings", [])],
+            n_nodes=int(data.get("n_nodes", 0)),
+        )
+    except (json.JSONDecodeError, TypeError, AttributeError, ValueError) as e:
+        return ArgtypeValidation(ok=False, errors=[f"argtype bridge returned a malformed response: {e}: {out[:200]}"])
 
-    return ArgtypeValidation(
-        ok=bool(data.get("ok")),
-        errors=[_format_diag(d) for d in data.get("errors", [])],
-        warnings=[_format_diag(d) for d in data.get("warnings", [])],
-        n_nodes=int(data.get("n_nodes", 0)),
-    )
+
+_bridge_checked = False
+
+
+def ensure_bridge() -> None:
+    """Fail fast (once per process) if the argtype bridge can't run.
+
+    Compiles a trivial document so a broken toolchain raises ``BridgeUnavailable``
+    *before* any LLM tokens are spent, instead of surfacing after the first
+    completion. Cached, so a ``wrap-all`` campaign pays this at most once.
+    """
+    global _bridge_checked
+    if _bridge_checked:
+        return
+    validate_argtype("selftest: seq(a: path)")  # raises BridgeUnavailable if broken
+    _bridge_checked = True

@@ -44,3 +44,18 @@ def test_decode_source_recovers_cp1252_em_dash():
 def test_decode_source_prefers_utf8():
     data = "café".encode()
     assert decode_source(data) == "café"
+
+
+def test_to_ascii_preserves_line_count():
+    # read_file numbers lines, so normalization must never add/remove newlines,
+    # even where a mapping expands (… -> ...) or substitutes (nbsp -> space).
+    s = "a — b\nc … d\nno break\n2×3\n"
+    assert to_ascii(s).count("\n") == s.count("\n")
+
+
+def test_decode_source_undefined_cp1252_byte_falls_back_to_replacement():
+    # 0x81 is an undefined cp1252 slot (and invalid UTF-8): it can't be recovered,
+    # becomes U+FFFD, which to_ascii then drops — no crash.
+    dec = decode_source(b"a\x81b")
+    assert "�" in dec
+    assert to_ascii(dec) == "ab"

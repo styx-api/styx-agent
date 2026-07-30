@@ -57,10 +57,11 @@ def decode_source(data: bytes) -> str:
     """Decode source-file bytes: UTF-8, falling back to cp1252.
 
     Third-party source repos are not uniformly UTF-8 — Windows-authored files use
-    cp1252 for punctuation like em-dashes (byte ``0x97``), which is invalid UTF-8.
-    cp1252 decodes every byte, so the fallback never fails and recovers the
-    intended character instead of the U+FFFD replacement char that strict UTF-8
-    ``errors="replace"`` would emit.
+    cp1252 for punctuation like em-dashes (byte ``0x97``), invalid UTF-8 that would
+    become U+FFFD under strict-UTF-8 ``errors="replace"``. The cp1252 fallback
+    recovers those. cp1252 has five undefined byte slots, so we still pass
+    ``errors="replace"`` (the decode never raises); those rare bytes fall back to
+    U+FFFD, which ``to_ascii`` then drops.
     """
     try:
         return data.decode("utf-8")

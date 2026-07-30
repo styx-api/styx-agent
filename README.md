@@ -81,7 +81,7 @@ Artifacts land under `--out-root` (default `output/`, gitignored):
 
     <out_root>/<package>/_strategy/{enumeration,parsing,outputs}.md
     <out_root>/<package>/<tool>/{interface,outputs}.md
-    <out_root>/<package>/<tool>/boutiques.json
+    <out_root>/<package>/<tool>/boutiques.json   # or argtype.argtype, per --target (<target>.<ext>)
 
 `wrap-all` instead writes a self-contained, timestamped run with stats:
 

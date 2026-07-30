@@ -11,7 +11,7 @@ import logging
 import time
 
 from styx_agent.agent import DEFAULT_MODEL, _acompletion, _add_usage, resolve_model
-from styx_agent.author.argtype_validator import validate_argtype
+from styx_agent.author.argtype_validator import ensure_bridge, validate_argtype
 from styx_agent.telemetry import AgentStat, record_agent
 
 logger = logging.getLogger(__name__)
@@ -75,7 +75,8 @@ first**: `any("--output", "-o")`.
 
 Because argv holds only strings, argtype has NO boolean type and NO generic enum \
 type. **Never write `bool`, `boolean`, `enum`, or `= true` / `= false`** — these \
-are hard errors (`Unknown alias 'bool'`, `Expected a value but found 'false'`). A \
+are hard errors (`Unknown alias 'bool'`, `Expected a value (string or number) but \
+found 'false'`). A \
 "boolean" concept appears on the command line in exactly one of two shapes — model \
 whichever the report shows:
 - **A presence flag** (no value): `opt("-v")`. Present ⟺ on. This is the common case.
@@ -85,7 +86,7 @@ the CLI expects.
 
 Likewise a fixed set of keywords is a literal alternation, never a typed enum: \
 `mode: "fast" | "robust" | "accurate"`. A choice among bare keywords is `|`; a \
-value with internal structure is a SubCommand (see microsyntax).
+value with internal structure is a microsyntax token (a joined `seq`, see below).
 
 ## Naming and docs
 
@@ -102,8 +103,10 @@ much to write.
 ## Modifiers are typed to node kinds
 
 Each `.method()` is defined only on certain node kinds; applying one to the wrong \
-kind is an error or is silently ignored (the modifier is lost). Respect the typing:
-- **terminals** (`int`/`float`/`str`/`path`) → `.min(n)`, `.max(n)`, `.default(v)`.
+kind is a hard compile error (the sole exception: a `= v`/`.default()` on a \
+`seq`/`set` struct warns and is dropped). Respect the typing:
+- **`int`/`float`** → `.min(n)`, `.max(n)`, `.default(v)`.
+- **`str`/`path`** → `.default(v)` (`.min`/`.max` are int/float ONLY).
 - **`rep`** → `.count(n)`, `.countMin(n)`, `.countMax(n)`.
 - **`seq`/`set`/`rep`/`opt`** → `.join(sep)`.
 - **`path`** → `.mediaType(...)`, `.mutable()`, `.resolveParent()`.
@@ -181,8 +184,8 @@ Often one argv element has internal structure — a little grammar of its own \
 (`key=value`, `1x2x3`, `Name[a,b]`). Build that structure with combinators, then \
 collapse the whole subtree to a SINGLE argv element with `.join(sep)` (sep default \
 `""`). A structured value typed as a bare `str` throws away the grammar and is a \
-defect. Put `.join()` on the `seq`/`rep` that builds the token (see Modifiers) — on \
-a terminal or `alt` it is ignored and the token will NOT collapse. General shapes:
+defect. Put `.join()` on the `seq`/`rep` that builds the token (see Modifiers) — putting it \
+on a terminal or `alt` is a hard compile error. General shapes:
 - delimited list → `rep(int).join("x")` gives `1x2x3`.
 - `key=value` → `seq(str, "=", str).join()`.
 - bracketed field list → `seq("[", a: int, ",", b: float, "]").join()` gives `[3,0.1]`.
@@ -265,9 +268,7 @@ bet: seq(
   maskfile: str,
 
   set(
-    /// # Fractional intensity threshold
-    ///
-    /// Smaller values give larger brain outline estimates. Range 0 to 1; tool default 0.5.
+    /// Fractional intensity threshold (0 to 1; tool default 0.5). Smaller values give larger brain estimates.
     opt("-f", fractional_intensity: float.min(0).max(1)),
 
     /// XYZ coordinates (voxels) of the centre of gravity.
@@ -301,8 +302,10 @@ async def author_argtype(
     bridge) and feeds any errors back for correction. Returns the argtype source
     on the first zero-error compile. Raises ``ValueError`` if it still fails to
     compile after ``max_retries`` correction attempts. Residual warnings on a
-    successful compile are logged, not fatal.
+    successful compile are logged, not fatal. Raises ``BridgeUnavailable`` (before
+    spending any tokens) if the validation toolchain is broken.
     """
+    ensure_bridge()
     user_message = (
         f"Produce the argtype descriptor for the tool '{tool_name}'.\n\n"
         f"## Interface report\n\n{interface_report}\n\n"
