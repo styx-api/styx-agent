@@ -8,6 +8,10 @@ CLAUDE.md
 # Cloned source repos for exploration
 repos/
 
+# Node (argtype validation bridge)
+node_modules/
+tools/argtype_bridge/package-lock.json
+
 # Python
 __pycache__/
 *.pyc

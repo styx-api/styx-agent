@@ -42,7 +42,13 @@ Top-level required fields:
 - `command-line` — a template string with `[UPPERCASE_KEYS]` placeholders, \
 beginning with the tool name. Each top-level input's `value-key` MUST appear \
 in this template exactly once; every `[KEY]` in the template MUST match an \
-input's `value-key`.
+input's `value-key`. The template contains ONLY the tool name, `[VALUE_KEY]` \
+placeholders, and literal punctuation for subcommand micro-syntax — **never an \
+input's flag**. Each input's flag comes from its own `command-line-flag` and is \
+prepended automatically at render time, so a flag written in the template is \
+emitted twice. WRONG: `"tool --dim [DIM]"` with the `dim` input also carrying \
+`"command-line-flag": "--dim"` renders `--dim --dim <value>`. RIGHT: \
+`"tool [DIM]"` with the input carrying `"command-line-flag": "--dim"`.
 - `inputs` — array of input objects (see below).
 
 Top-level optional fields:

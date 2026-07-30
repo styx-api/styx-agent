@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from styx_agent import wrap, wrap_all
-from styx_agent.author import author_boutiques
+from styx_agent.author import TARGETS
 from styx_agent.explorer import explore, explore_interface, explore_outputs
 from styx_agent.paths import strategy_dir, tool_dir
 from styx_agent.scanner import explore_strategy
@@ -154,7 +154,7 @@ def main() -> None:
         help="Override path to outputs report (default: <out-root>/<package>/<tool>/outputs.md)",
     )
     author_p.add_argument(
-        "--target", default="boutiques", choices=("boutiques",),
+        "--target", default="boutiques", choices=("boutiques", "argtype"),
         help="Descriptor target format",
     )
     author_p.add_argument(
@@ -171,7 +171,7 @@ def main() -> None:
     wrap_p.add_argument("tool", help="Tool command name")
     wrap_p.add_argument("repo", help="Path to cloned source repository")
     wrap_p.add_argument(
-        "--target", default="boutiques", choices=("boutiques",),
+        "--target", default="boutiques", choices=("boutiques", "argtype"),
         help="Descriptor target format",
     )
     wrap_p.add_argument(
@@ -204,7 +204,7 @@ def main() -> None:
         ),
     )
     wrap_all_p.add_argument(
-        "--target", default="boutiques", choices=("boutiques",),
+        "--target", default="boutiques", choices=("boutiques", "argtype"),
         help="Descriptor target format",
     )
     wrap_all_p.add_argument(
@@ -284,8 +284,9 @@ def main() -> None:
         for p in (iface_path, outs_path):
             if not p.exists():
                 parser.error(f"report not found at {p}")
+        author_fn, extension = TARGETS[args.target]
         descriptor = asyncio.run(
-            author_boutiques(
+            author_fn(
                 tool_name=args.tool,
                 interface_report=iface_path.read_text(encoding="utf-8"),
                 output_report=outs_path.read_text(encoding="utf-8"),
@@ -293,7 +294,7 @@ def main() -> None:
                 **_model_kwarg(args),
             )
         )
-        _write_file(dest / f"{args.target}.json", descriptor)
+        _write_file(dest / f"{args.target}.{extension}", descriptor)
 
     elif args.command == "wrap":
         dest = asyncio.run(
