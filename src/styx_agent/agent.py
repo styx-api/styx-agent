@@ -17,7 +17,7 @@ from styx_agent.tools.filesystem import TOOL_DEFINITIONS, execute_tool
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = os.environ.get("STYX_AGENT_MODEL", "neurodesk/kimi-k2.7")
+DEFAULT_MODEL = os.environ.get("STYX_AGENT_MODEL", "neurodesk/glm-5.2")
 # Per-agent exploration budget. The biggest tools (antsRegistration et al.) have
 # dozens of options + a stage grammar that 40 single-file-read turns can't cover,
 # which forces a premature final report. Default raised to 60; override per-run
@@ -30,7 +30,7 @@ MAX_TURNS = int(os.environ.get("STYX_AGENT_MAX_TURNS", "60"))
 TURN_WARNING_THRESHOLD = 5
 
 # Neurodesk hosts an OpenAI-compatible LiteLLM gateway. We expose its models
-# under a `neurodesk/` prefix (e.g. `neurodesk/kimi-k2.7`, the default) so a
+# under a `neurodesk/` prefix (e.g. `neurodesk/glm-5.2`, the default) so a
 # model can be selected with --model / STYX_AGENT_MODEL and routed to Neurodesk
 # without hijacking the generic OPENAI_* env vars. Set STYX_AGENT_MODEL to any
 # other LiteLLM model string (e.g. `litellm_proxy/...`) to use a different provider.
