@@ -1,13 +1,26 @@
-"""Validate argtype documents with the real styx compiler.
+"""Validate argtype documents against the argtype parser.
 
 Unlike the Boutiques path (a hand-rolled Python re-implementation of the Styx-v1
 schema in ``validator.py``), argtype has a hand-written grammar whose only
-source of truth is the styx (v2) compiler frontend. Rather than re-implement and drift, we
-shell out to a tiny Node bridge (``tools/argtype_bridge/argtype_validate.mjs``)
-that calls ``@styx-api/core``'s ``compile(src, {format: "argtype"})`` and returns
-its errors/warnings as JSON. This is strictly stronger than a schema check: it
-confirms the document parses *and* lowers to the Styx IR, with line/column
-diagnostics we can feed straight back into the author's retry loop.
+source of truth is its parser. Rather than re-implement and drift, we shell out
+to a tiny Node bridge (``tools/argtype_bridge/argtype_validate.mjs``) that runs
+``@argtype/core``'s parse-and-resolve passes and returns their errors/warnings
+as JSON, with line/column diagnostics we can feed straight back into the
+author's retry loop.
+
+This used to compile the document with ``@styx-api/core`` instead, which made
+the retry loop a *deployment* gate rather than a grammar one. The distinction is
+not academic: a descriptor whose grammar was right but which the compiler could
+not lower yet came back as an error, so the loop taught the author to avoid
+legal argtype; meanwhile a dangling ``{name}`` in ``.output(...)`` passed,
+because lowering does not resolve templates, and surfaced at codegen instead.
+The parser catches the second and has no opinion on the first, which is the
+right bias for a gate that decides whether a *descriptor* is wrong.
+
+Extra static checks belong in ``@argtype/core`` where they are general, or here
+first and upstream once stable — never in a consumer, whose policy would leak
+back into the author through this loop. The compiler is still used for the
+boutiques path and IR inspection, in ``tools/styx_bridge/``.
 """
 
 from __future__ import annotations
@@ -30,11 +43,13 @@ class BridgeUnavailable(RuntimeError):
 
 @dataclass
 class ArgtypeValidation:
-    """Result of compiling an argtype document via the styx bridge."""
+    """Result of resolving an argtype document via the parser bridge."""
 
     ok: bool
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    #: Nodes in the resolved argtype document. Was IR nodes when this compiled;
+    #: both are a size, neither is comparable to the other across the change.
     n_nodes: int = 0
 
 
@@ -44,7 +59,7 @@ def _bridge_path() -> Path:
     if not path.is_file():
         raise BridgeUnavailable(
             f"argtype validation bridge not found at {path}. Run "
-            f"`npm install` in tools/argtype_bridge/ (needs @styx-api/core), or set "
+            f"`npm install` in tools/argtype_bridge/ (needs @argtype/core), or set "
             f"STYX_AGENT_ARGTYPE_BRIDGE to the argtype_validate.mjs path."
         )
     return path
@@ -61,16 +76,17 @@ def _format_diag(d: dict) -> str:
 
 
 def validate_argtype(source: str) -> ArgtypeValidation:
-    """Compile ``source`` as argtype via the styx bridge; return diagnostics.
+    """Resolve ``source`` as argtype via the parser bridge; return diagnostics.
 
-    Confirms the document parses and lowers to the Styx IR. It does NOT resolve
-    output-template references, so a dangling ``{name}`` in a ``.output(...)`` is
-    not caught here (that surfaces later, at codegen).
+    Confirms the document parses and that every resolve pass accepts it —
+    including output templates, so a dangling ``{name}`` in a ``.output(...)``
+    is an error here rather than a surprise at codegen. It says nothing about
+    whether any particular consumer can lower the result, on purpose.
 
     Raises ``BridgeUnavailable`` for an *environment* failure — Node or the bridge
     script missing, its dependencies not installed/built, or the call timing out —
     so the caller can distinguish a broken toolchain from an invalid descriptor
-    (rather than feeding a Node stack trace back to the LLM as a "compile error").
+    (rather than feeding a Node stack trace back to the LLM as a diagnostic).
     A malformed but non-empty bridge response is surfaced as a single error so the
     author loop still gets actionable feedback.
     """
@@ -92,14 +108,14 @@ def validate_argtype(source: str) -> ArgtypeValidation:
         raise BridgeUnavailable(f"argtype bridge timed out after {e.timeout}s") from e
 
     out = proc.stdout.strip()
-    # The bridge always prints JSON and exits 0 — even on a compile *or* internal
+    # The bridge always prints JSON and exits 0 — even on a validation *or* internal
     # error (its own try/catch). Empty stdout with a nonzero exit means Node failed
-    # to start the script at all (e.g. `@styx-api/core` not installed/built): an
+    # to start the script at all (e.g. `@argtype/core` not installed): an
     # environment failure, not a descriptor defect.
     if not out:
         if proc.returncode != 0:
             raise BridgeUnavailable(
-                f"argtype bridge failed to run (exit {proc.returncode}); is @styx-api/core "
+                f"argtype bridge failed to run (exit {proc.returncode}); is @argtype/core "
                 f"installed in tools/argtype_bridge? stderr: {proc.stderr.strip()[:400]}"
             )
         return ArgtypeValidation(ok=False, errors=["argtype bridge produced no output"])
@@ -122,7 +138,7 @@ _bridge_checked = False
 def ensure_bridge() -> None:
     """Fail fast (once per process) if the argtype bridge can't run.
 
-    Compiles a trivial document so a broken toolchain raises ``BridgeUnavailable``
+    Resolves a trivial document so a broken toolchain raises ``BridgeUnavailable``
     *before* any LLM tokens are spent, instead of surfacing after the first
     completion. Cached, so a ``wrap-all`` campaign pays this at most once.
     """

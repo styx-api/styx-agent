@@ -1,6 +1,6 @@
 """Tests for the argtype author: fence stripping, target dispatch, the retry
-loop (LLM + validator mocked), and end-to-end compiler validation (skipped when
-the Node bridge is unavailable, e.g. in CI without a local styx build)."""
+loop (LLM + validator mocked), and end-to-end parser validation (skipped when
+the Node bridge is unavailable, e.g. in CI without `npm install`)."""
 
 import asyncio
 import shutil
@@ -126,11 +126,11 @@ def test_wrap_writes_target_extension(monkeypatch, tmp_path):
 # --- validator: environment failures raise BridgeUnavailable (not compile errors) ---
 
 def test_validate_argtype_env_failure_raises_bridge_unavailable(monkeypatch):
-    """Empty stdout + nonzero exit (e.g. @styx-api/core missing) is an environment
+    """Empty stdout + nonzero exit (e.g. @argtype/core missing) is an environment
     failure — must raise BridgeUnavailable, not be reported as an invalid descriptor."""
     class FakeProc:
         stdout = ""
-        stderr = "Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@styx-api/core'"
+        stderr = "Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@argtype/core'"
         returncode = 1
 
     monkeypatch.setattr(vmod.shutil, "which", lambda _n: "node")
@@ -175,6 +175,40 @@ def test_validate_argtype_accepts_valid_and_flags_invalid():
 
 @bridge
 def test_validate_argtype_requires_quoted_digit_root():
-    # AFNI-style digit-led tool names must be quoted.
+    # AFNI-style digit-led tool names must be quoted. A grammar rule, not a
+    # lowering one, so moving off the compiler must not lose it.
     assert validate_argtype('"3dcalc": seq(a: path)').ok
     assert not validate_argtype("3dcalc: seq(a: path)").ok
+
+
+@bridge
+def test_validate_argtype_catches_dangling_output_reference():
+    """The defect the compiler path let through.
+
+    `compile()` does not resolve output templates, so a `{name}` naming nothing
+    reached codegen before failing. It is a genuine grammar defect and the
+    parser reports it as an error, which is most of why this gate moved.
+    """
+    result = validate_argtype("bet: seq(infile: path).output(o: `{nope}.nii.gz`)")
+    assert not result.ok
+    assert any("nope" in e for e in result.errors)
+    # The same document with the reference resolved is fine.
+    assert validate_argtype("bet: seq(infile: path).output(o: `{infile}.nii.gz`)").ok
+
+
+@bridge
+def test_validate_argtype_catches_misapplied_annotations():
+    """The extension passes have to run, or this gate is weaker than the old one."""
+    assert not validate_argtype("bet: seq(a: path).count(3)").ok  # .count() is rep-only
+    assert not validate_argtype('x: opt("-o", o: str.resolveParent())').ok  # path-only
+
+
+@bridge
+def test_validate_argtype_has_no_opinion_on_lowering():
+    """A grammar gate must not fail a descriptor for a consumer's sake.
+
+    Nothing here asserts what styx can or cannot lower - that is the point of
+    the split. This pins the shape of a document that is unambiguously legal
+    argtype so the gate stays a grammar gate.
+    """
+    assert validate_argtype('x: any(opt("-a", a: int), rep(("-H", h: str)))').ok

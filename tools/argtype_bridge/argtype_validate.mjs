@@ -1,18 +1,38 @@
 #!/usr/bin/env node
-// Validate an argtype document with the real styx compiler.
+// Validate an argtype document against the argtype parser.
 //
-// Reads argtype source from stdin, compiles it via @styx-api/core's `compile()`
-// with the argtype frontend, and prints a single JSON object to stdout:
+// Reads argtype source from stdin, runs the full parse-and-resolve pipeline from
+// `@argtype/core`, and prints a single JSON object to stdout:
 //
-//     {"ok": bool, "errors": [{message, line?, column?}],
-//      "warnings": [{message, line?, column?}], "n_nodes": int}
+//     {"ok": bool, "errors": [{message, code, line?, column?}],
+//      "warnings": [{message, code, line?, column?}], "n_nodes": int}
 //
-// `ok` is true iff the compiler reported zero errors. Warnings never flip `ok`
-// but are returned so the caller can surface them (e.g. undeclared extensions).
-// Any crash prints {"ok": false, "errors": [{message: "..."}]} and exits 0 so
-// the Python side always gets parseable JSON on stdout.
+// `ok` is true iff nothing reported an error-severity diagnostic. Warnings never
+// flip `ok` but are returned so the caller can surface them. Any crash prints
+// {"ok": false, "errors": [{message: "..."}]} and exits 0 so the Python side
+// always gets parseable JSON on stdout.
+//
+// This deliberately does NOT compile. The author's retry loop is a *grammar*
+// gate: what belongs in it is "this descriptor is wrong", not "this consumer
+// cannot lower it yet". Validating through the styx compiler conflated the two
+// and corrected the author against one consumer's lowering policy - a grammar it
+// got right but styx could not lower came back as an error, teaching it to avoid
+// legal argtype, while a dangling `{name}` output reference passed, because
+// lowering does not resolve templates. The parser has the opposite bias, which
+// is the correct one here: `resolveReferences` reports that dangling reference
+// as an error, and has no opinion at all about lowering.
 
-import { compile } from "@styx-api/core";
+import {
+  inlineAliases,
+  parseArgtype,
+  partitionDiagnostics,
+  resolveAnnotations,
+  resolveConstraints,
+  resolveMediaTypes,
+  resolveOutputs,
+  resolvePaths,
+  resolveReferences,
+} from "@argtype/core";
 
 function readStdin() {
   return new Promise((resolve, reject) => {
@@ -25,35 +45,63 @@ function readStdin() {
 }
 
 function normalizeDiag(d) {
-  const out = { message: d?.message ?? String(d) };
-  if (d?.location) {
-    if (typeof d.location.line === "number") out.line = d.location.line;
-    if (typeof d.location.column === "number") out.column = d.location.column;
-  }
+  // `Diagnostic` carries `line`/`column` as convenience aliases of
+  // `span.start`, so there is nothing to dig out of a nested location.
+  const out = { message: d?.message ?? String(d), code: d?.code ?? "" };
+  if (typeof d?.line === "number") out.line = d.line;
+  if (typeof d?.column === "number") out.column = d.column;
   return out;
 }
 
-function countNodes(expr) {
-  if (!expr || typeof expr !== "object") return 0;
+function countNodes(node) {
+  if (!node || typeof node !== "object") return 0;
   let n = 1;
-  const a = expr.attrs ?? {};
-  if (Array.isArray(a.nodes)) for (const c of a.nodes) n += countNodes(c);
-  if (Array.isArray(a.alts)) for (const c of a.alts) n += countNodes(c);
-  if (a.node) n += countNodes(a.node);
+  if (Array.isArray(node.children)) for (const c of node.children) n += countNodes(c);
   return n;
+}
+
+/**
+ * Every pass, in production order, with their diagnostics concatenated.
+ *
+ * The extension passes (outputs, paths, constraints, media types) run against
+ * the resolved document and are where a misapplied annotation surfaces -
+ * `.count()` on something that is not a `rep`, `.resolveParent()` on a `str`.
+ * Skipping them would make the gate weaker than the compiler's was, which is
+ * not the trade being made here.
+ */
+function validate(src) {
+  const parsed = parseArgtype(src);
+  if (!parsed.doc) return { diagnostics: parsed.diagnostics, nodes: 0 };
+
+  const inlined = inlineAliases(parsed.doc);
+  const resolved = resolveAnnotations(inlined.doc);
+  const doc = resolved.doc;
+
+  const diagnostics = [
+    ...parsed.diagnostics,
+    ...inlined.diagnostics,
+    ...resolved.diagnostics,
+    ...resolveOutputs(doc).diagnostics,
+    ...resolvePaths(doc).diagnostics,
+    ...resolveConstraints(doc).diagnostics,
+    ...resolveMediaTypes(doc).diagnostics,
+    // Runs on the AST rather than the resolved tree, and is the pass that
+    // catches a `.output(...)` template naming a node that does not exist.
+    ...resolveReferences(inlined.doc).diagnostics,
+  ];
+  return { diagnostics, nodes: countNodes(doc.root) };
 }
 
 async function main() {
   const src = await readStdin();
-  const res = compile(src, { format: "argtype", filename: "descriptor.argtype" });
-  const errors = (res.errors ?? []).map(normalizeDiag);
-  const warnings = (res.warnings ?? []).map(normalizeDiag);
+  const { diagnostics, nodes } = validate(src);
+  const { errors, warnings } = partitionDiagnostics(diagnostics);
   process.stdout.write(
     JSON.stringify({
       ok: errors.length === 0,
-      errors,
-      warnings,
-      n_nodes: countNodes(res.expr),
+      errors: errors.map(normalizeDiag),
+      warnings: warnings.map(normalizeDiag),
+      n_nodes: nodes,
     }),
   );
 }

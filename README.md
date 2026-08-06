@@ -74,8 +74,9 @@ styx-agent explore <tool> <repo> [--package fsl]
 styx-agent author <tool> [--target boutiques|argtype] [--max-retries 3]
 ```
 
-The `argtype` target validates by compiling with the styx compiler, so it needs
-Node and a built `@styx-api/core` — see [`tools/argtype_bridge/`](tools/argtype_bridge/).
+The `argtype` target validates against the argtype parser, so it needs Node and
+`@argtype/core` — see [`tools/argtype_bridge/`](tools/argtype_bridge/), which
+also explains why this is the parser and not the styx compiler.
 
 Artifacts land under `--out-root` (default `output/`, gitignored):
 

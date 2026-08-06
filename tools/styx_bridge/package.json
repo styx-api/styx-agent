@@ -1,0 +1,10 @@
+{
+  "name": "styx-agent-styx-bridge",
+  "private": true,
+  "type": "module",
+  "version": "0.0.0",
+  "description": "Node bridge: styx compiler access for IR inspection and boutiques transpile",
+  "dependencies": {
+    "@styx-api/core": "0.9.0"
+  }
+}
