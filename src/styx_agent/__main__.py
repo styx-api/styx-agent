@@ -25,6 +25,8 @@ import json
 import logging
 import os
 import sys
+import time
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -33,6 +35,7 @@ from styx_agent.author import TARGETS
 from styx_agent.explorer import explore, explore_interface, explore_outputs
 from styx_agent.paths import strategy_dir, tool_dir
 from styx_agent.scanner import explore_strategy
+from styx_agent.telemetry import collect_agent_stats, write_transcripts
 from styx_agent.toollist import read_tool_list
 from styx_agent.tools.filesystem import require_grep
 
@@ -86,6 +89,127 @@ def _write_file(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content + ("\n" if not content.endswith("\n") else ""), encoding="utf-8")
     print(f"Wrote {path}", file=sys.stderr)
+
+
+@contextmanager
+def _recorded(dest: Path, args: argparse.Namespace, repo: str | None = None):
+    """Run a command, then write its provenance, resources and transcripts to ``dest``.
+
+    ``wrap-all`` has always recorded this per tool. The individual subcommands
+    recorded nothing at all - ``record_agent`` is a no-op outside a collection
+    scope - so cost, effort and history for a plain ``scan``/``explore``/
+    ``author`` were simply unrecoverable afterwards. A frozen report set built
+    that way is also unfalsifiable: the only thing naming the model that produced
+    it is whatever the operator typed into the directory name.
+
+    Written even when the command fails, because a run that died halfway is
+    exactly when the transcript is worth having.
+    """
+    from styx_agent import _git_sha, _repo_sha_if_own_checkout
+    from styx_agent.agent import DEFAULT_MODEL
+
+    started = time.monotonic()
+    started_at = datetime.now(UTC).isoformat(timespec="seconds")
+    status = "ok"
+    with collect_agent_stats() as stats:
+        try:
+            yield stats
+        except BaseException as e:
+            status = f"{type(e).__name__}: {e}"
+            raise
+        finally:
+            meta = {
+                "command": args.command,
+                "tool": getattr(args, "tool", None),
+                "package": args.package,
+                "model": args.model or DEFAULT_MODEL,
+                "status": status,
+                "started_at": started_at,
+                "seconds": round(time.monotonic() - started, 2),
+                "turns": sum(s.turns for s in stats),
+                "prompt_tokens": sum(s.prompt_tokens for s in stats),
+                "completion_tokens": sum(s.completion_tokens for s in stats),
+                "tokens": sum(s.total_tokens for s in stats),
+                "styx_agent_sha": _git_sha(Path(__file__).resolve().parent),
+                "source_repo_sha": _repo_sha_if_own_checkout(repo) if repo else None,
+                "agents": [s.to_dict() for s in stats],
+            }
+            dest.mkdir(parents=True, exist_ok=True)
+            (dest / "meta.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+            written = write_transcripts(stats, dest)
+            print(
+                f"Wrote {dest / 'meta.json'} ({meta['tokens']} tokens, {meta['turns']} turns, "
+                f"{meta['seconds']}s, {len(written)} transcript(s))",
+                file=sys.stderr,
+            )
+
+
+def _explore(args: argparse.Namespace, dest: Path, parser: argparse.ArgumentParser) -> None:
+    if args.interface_only:
+        report = asyncio.run(
+            explore_interface(
+                tool_name=args.tool, repo_path=args.repo,
+                package=args.package, out_root=args.out_root,
+                **_model_kwarg(args),
+            )
+        )
+        _write_file(dest / "interface.md", report)
+    elif args.outputs_only:
+        iface_path = (
+            Path(args.interface_report)
+            if args.interface_report else dest / "interface.md"
+        )
+        if not iface_path.exists():
+            parser.error(f"interface report not found at {iface_path}")
+        interface_report = iface_path.read_text(encoding="utf-8")
+        report = asyncio.run(
+            explore_outputs(
+                tool_name=args.tool, repo_path=args.repo,
+                interface_report=interface_report,
+                package=args.package, out_root=args.out_root,
+                **_model_kwarg(args),
+            )
+        )
+        _write_file(dest / "outputs.md", report)
+    else:
+        # interface.md lands as soon as it exists, not after output tracing
+        # returns: tracing is the long half, and a failure there used to
+        # take a finished interface report down with it.
+        _, outs = asyncio.run(
+            explore(
+                tool_name=args.tool, repo_path=args.repo,
+                package=args.package, out_root=args.out_root,
+                refresh_strategy=args.refresh_strategy,
+                on_interface=lambda report: _write_file(dest / "interface.md", report),
+                **_model_kwarg(args),
+            )
+        )
+        _write_file(dest / "outputs.md", outs)
+
+
+def _author_command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    dest = tool_dir(args.package, args.tool, args.out_root)
+    iface_path = (
+        Path(args.interface_report) if args.interface_report else dest / "interface.md"
+    )
+    outs_path = (
+        Path(args.outputs_report) if args.outputs_report else dest / "outputs.md"
+    )
+    for p in (iface_path, outs_path):
+        if not p.exists():
+            parser.error(f"report not found at {p}")
+    author_fn, extension = TARGETS[args.target]
+    with _recorded(dest, args):
+        descriptor = asyncio.run(
+            author_fn(
+                tool_name=args.tool,
+                interface_report=iface_path.read_text(encoding="utf-8"),
+                output_report=outs_path.read_text(encoding="utf-8"),
+                max_retries=args.max_retries,
+                **_model_kwarg(args),
+            )
+        )
+    _write_file(dest / f"{args.target}.{extension}", descriptor)
 
 
 def main() -> None:
@@ -222,82 +346,26 @@ def main() -> None:
     require_grep()
 
     if args.command == "scan":
-        asyncio.run(
-            explore_strategy(
-                package=args.package,
-                repo_path=args.repo,
-                out_root=args.out_root,
-                refresh=args.refresh,
-                **_model_kwarg(args),
+        strategy = strategy_dir(args.package, args.out_root)
+        with _recorded(strategy, args, args.repo):
+            asyncio.run(
+                explore_strategy(
+                    package=args.package,
+                    repo_path=args.repo,
+                    out_root=args.out_root,
+                    refresh=args.refresh,
+                    **_model_kwarg(args),
+                )
             )
-        )
-        print(f"Strategy cached at {strategy_dir(args.package, args.out_root)}", file=sys.stderr)
+        print(f"Strategy cached at {strategy}", file=sys.stderr)
 
     elif args.command == "explore":
         dest = tool_dir(args.package, args.tool, args.out_root)
-        if args.interface_only:
-            report = asyncio.run(
-                explore_interface(
-                    tool_name=args.tool, repo_path=args.repo,
-                    package=args.package, out_root=args.out_root,
-                    **_model_kwarg(args),
-                )
-            )
-            _write_file(dest / "interface.md", report)
-        elif args.outputs_only:
-            iface_path = (
-                Path(args.interface_report)
-                if args.interface_report else dest / "interface.md"
-            )
-            if not iface_path.exists():
-                parser.error(f"interface report not found at {iface_path}")
-            interface_report = iface_path.read_text(encoding="utf-8")
-            report = asyncio.run(
-                explore_outputs(
-                    tool_name=args.tool, repo_path=args.repo,
-                    interface_report=interface_report,
-                    package=args.package, out_root=args.out_root,
-                    **_model_kwarg(args),
-                )
-            )
-            _write_file(dest / "outputs.md", report)
-        else:
-            # interface.md lands as soon as it exists, not after output tracing
-            # returns: tracing is the long half, and a failure there used to
-            # take a finished interface report down with it.
-            _, outs = asyncio.run(
-                explore(
-                    tool_name=args.tool, repo_path=args.repo,
-                    package=args.package, out_root=args.out_root,
-                    refresh_strategy=args.refresh_strategy,
-                    on_interface=lambda report: _write_file(dest / "interface.md", report),
-                    **_model_kwarg(args),
-                )
-            )
-            _write_file(dest / "outputs.md", outs)
+        with _recorded(dest, args, args.repo):
+            _explore(args, dest, parser)
 
     elif args.command == "author":
-        dest = tool_dir(args.package, args.tool, args.out_root)
-        iface_path = (
-            Path(args.interface_report) if args.interface_report else dest / "interface.md"
-        )
-        outs_path = (
-            Path(args.outputs_report) if args.outputs_report else dest / "outputs.md"
-        )
-        for p in (iface_path, outs_path):
-            if not p.exists():
-                parser.error(f"report not found at {p}")
-        author_fn, extension = TARGETS[args.target]
-        descriptor = asyncio.run(
-            author_fn(
-                tool_name=args.tool,
-                interface_report=iface_path.read_text(encoding="utf-8"),
-                output_report=outs_path.read_text(encoding="utf-8"),
-                max_retries=args.max_retries,
-                **_model_kwarg(args),
-            )
-        )
-        _write_file(dest / f"{args.target}.{extension}", descriptor)
+        _author_command(args, parser)
 
     elif args.command == "wrap":
         dest = asyncio.run(
