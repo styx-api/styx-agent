@@ -21,16 +21,7 @@ it calls are DIFFERENT tools with separate interfaces.
 
 ### Inputs
 
-Every input the tool accepts. The set is complete only when every place the \
-parser draws options from has been read. Options are not always defined in one \
-table or one file: they may be split across translation units and merged at \
-parse time, included from a shared header, or added by a wrapper that forwards \
-to a binary. Where the package strategy names such a place, read it before \
-reporting — a partial option list is a defect in the same way a partial list of \
-accepted values is, and the tool's own `--help` is not evidence that a table is \
-complete.
-
-For each input, document:
+Every input the tool accepts. For each one, document:
 
 - **Name** — identifier from the source (variable name, option name)
 - **Description** — help text, quoted verbatim from source
