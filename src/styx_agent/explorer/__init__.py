@@ -13,6 +13,7 @@ auto-loaded into each agent's system prompt via ``load_strategy``.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 from styx_agent.agent import DEFAULT_MODEL
@@ -38,8 +39,16 @@ async def explore(
     model: str = DEFAULT_MODEL,
     out_root: str | Path | None = None,
     refresh_strategy: bool = False,
+    on_interface: Callable[[str], None] | None = None,
 ) -> tuple[str, str]:
     """Run the full per-tool pipeline: ensure strategy → interface → outputs.
+
+    ``on_interface`` is called with the interface report the moment it is
+    finished, before output tracing starts. The caller persists it there rather
+    than after both stages return, because output tracing is the long half: a
+    failure in it used to discard a completed interface report along with
+    everything spent producing it, and left nothing for ``--outputs-only
+    --interface-report`` to resume from.
 
     Returns:
         (interface_report, output_report) as separate strings.
@@ -55,6 +64,8 @@ async def explore(
     interface_report = await explore_interface(
         tool_name, repo_path, package=package, model=model, out_root=out_root,
     )
+    if on_interface is not None:
+        on_interface(interface_report)
     logger.info("Interface report complete, starting output tracing...")
 
     output_report = await explore_outputs(
