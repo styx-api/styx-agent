@@ -333,7 +333,7 @@ async def run_agent(
                 continue
             record_agent(AgentStat(
                 label, turn + 1, time.monotonic() - start, prompt_tokens, completion_tokens,
-                model=call_model, transcript=transcript,
+                model=model, transcript=transcript,
             ))
             return content
 
@@ -399,6 +399,6 @@ async def run_agent(
     completion_tokens += fp_completion
     record_agent(AgentStat(
         label, max_turns, time.monotonic() - start, prompt_tokens, completion_tokens,
-        model=call_model, transcript=transcript,
+        model=model, transcript=transcript,
     ))
     return report

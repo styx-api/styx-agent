@@ -97,6 +97,35 @@ def test_to_dict_summarises_the_transcript_rather_than_embedding_it():
     assert summary["total_tokens"] == 120
 
 
+def test_recording_a_stat_never_needs_provider_credentials(monkeypatch):
+    """Telemetry must not be able to crash the run it is measuring.
+
+    Recording used to resolve the model string for its `model` field, and
+    `resolve_model` raises when the provider's key is absent - so on a machine
+    without credentials (CI), finishing an author run raised from its own
+    `finally` block and masked whatever the run was actually doing.
+    """
+    import asyncio
+
+    from styx_agent.author import argtype as argtype_mod
+
+    monkeypatch.delenv("NEURODESK_KEY", raising=False)
+
+    async def fake_complete(messages, model):
+        return "t: seq(a: path)", 10, 5
+
+    monkeypatch.setattr(argtype_mod, "ensure_bridge", lambda: None)
+    monkeypatch.setattr(argtype_mod, "_complete", fake_complete)
+    monkeypatch.setattr(argtype_mod, "validate_argtype", lambda src: type("V", (), {"ok": True, "errors": [], "warnings": [], "n_nodes": 3})())
+
+    with collect_agent_stats() as stats:
+        asyncio.run(argtype_mod.author_argtype("t", "iface", "outs", model="neurodesk/glm-5.2"))
+
+    assert len(stats) == 1
+    # The requested string is what reproduces the run, so that is what is kept.
+    assert stats[0].model == "neurodesk/glm-5.2"
+
+
 def test_stats_are_still_a_no_op_outside_a_collection_scope():
     record_agent(_stat())  # must not raise
     with collect_agent_stats() as stats:
