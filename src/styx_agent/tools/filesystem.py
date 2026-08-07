@@ -279,8 +279,31 @@ TOOL_DEFINITIONS = [
 ]
 
 
+#: Required parameters per tool, read off the schemas the model is actually
+#: given, so this check cannot drift from what it was told.
+_REQUIRED: dict[str, list[str]] = {
+    tool["function"]["name"]: list(tool["function"]["parameters"].get("required", []))
+    for tool in TOOL_DEFINITIONS
+}
+
+
 def execute_tool(name: str, args: dict, repo_root: str) -> str:
-    """Execute a tool by name and return its result."""
+    """Execute a tool by name and return its result.
+
+    A malformed call — one missing an argument its schema declares required —
+    comes back as an error string rather than raising. The model emitted it and
+    the model can correct it on the next turn, which is how every other bad
+    input in this loop is handled; raising instead destroys the whole run and
+    every token already spent on it. An outputs trace is ten-plus turns of
+    reading, and losing all of it to one dropped ``path`` is not a good trade.
+    """
+    missing = [key for key in _REQUIRED.get(name, []) if args.get(key) is None]
+    if missing:
+        return (
+            f"Error: tool '{name}' requires {', '.join(missing)}, "
+            f"which the call did not provide. Call it again with {'them' if len(missing) > 1 else 'it'} set."
+        )
+
     match name:
         case "list_directory":
             return list_directory(args["path"], repo_root)
@@ -293,7 +316,10 @@ def execute_tool(name: str, args: dict, repo_root: str) -> str:
         case "grep":
             return grep(
                 args["pattern"], repo_root,
-                path=args.get("path", "."),
+                # `or` rather than a `.get` default: a model that sends an
+                # explicit null means "unset", and `.get(k, d)` would hand the
+                # null straight through.
+                path=args.get("path") or ".",
                 glob_pattern=args.get("glob"),
             )
         case "read_tail":
@@ -304,7 +330,7 @@ def execute_tool(name: str, args: dict, repo_root: str) -> str:
         case "find_files":
             return find_files(
                 args["pattern"], repo_root,
-                path=args.get("path", "."),
+                path=args.get("path") or ".",
             )
         case _:
             return f"Unknown tool: {name}"

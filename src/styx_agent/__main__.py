@@ -262,15 +262,18 @@ def main() -> None:
             )
             _write_file(dest / "outputs.md", report)
         else:
-            iface, outs = asyncio.run(
+            # interface.md lands as soon as it exists, not after output tracing
+            # returns: tracing is the long half, and a failure there used to
+            # take a finished interface report down with it.
+            _, outs = asyncio.run(
                 explore(
                     tool_name=args.tool, repo_path=args.repo,
                     package=args.package, out_root=args.out_root,
                     refresh_strategy=args.refresh_strategy,
+                    on_interface=lambda report: _write_file(dest / "interface.md", report),
                     **_model_kwarg(args),
                 )
             )
-            _write_file(dest / "interface.md", iface)
             _write_file(dest / "outputs.md", outs)
 
     elif args.command == "author":
