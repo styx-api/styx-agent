@@ -1,7 +1,7 @@
 """Author: translate Explorer reports into an argtype descriptor.
 
 Mirrors ``author/boutiques.py`` but emits argtype (the styx DSL) instead of a
-Boutiques JSON object, and validates by shelling out to the real styx compiler
+Boutiques JSON object, and validates by shelling out to the argtype parser
 (see ``argtype_validator.py``) rather than a hand-rolled schema check.
 """
 
@@ -27,7 +27,7 @@ DEFAULT_MAX_RETRIES = 3
 # normalization) in deterministic code, not the prompt.
 ARGTYPE_AUTHOR_PROMPT = """\
 You translate tool analysis reports into an **argtype** descriptor. Your output is \
-a single argtype document that the styx compiler parses with ZERO errors.
+a single argtype document that resolves with ZERO errors.
 
 ## The mental model — argtype describes `argv`
 
@@ -103,7 +103,7 @@ much to write.
 ## Modifiers are typed to node kinds
 
 Each `.method()` is defined only on certain node kinds; applying one to the wrong \
-kind is a hard compile error (the sole exception: a `= v`/`.default()` on a \
+kind is a hard error (the sole exception: a `= v`/`.default()` on a \
 `seq`/`set` struct warns and is dropped). Respect the typing:
 - **`int`/`float`** → `.min(n)`, `.max(n)`, `.default(v)`.
 - **`str`/`path`** → `.default(v)` (`.min`/`.max` are int/float ONLY).
@@ -185,7 +185,7 @@ Often one argv element has internal structure — a little grammar of its own \
 collapse the whole subtree to a SINGLE argv element with `.join(sep)` (sep default \
 `""`). A structured value typed as a bare `str` throws away the grammar and is a \
 defect. Put `.join()` on the `seq`/`rep` that builds the token (see Modifiers) — putting it \
-on a terminal or `alt` is a hard compile error. General shapes:
+on a terminal or `alt` is a hard error. General shapes:
 - delimited list → `rep(int).join("x")` gives `1x2x3`.
 - `key=value` → `seq(str, "=", str).join()`.
 - bracketed field list → `seq("[", a: int, ",", b: float, "]").join()` gives `[3,0.1]`.
@@ -298,12 +298,17 @@ async def author_argtype(
 ) -> str:
     """Produce an argtype descriptor from Explorer reports.
 
-    Validates each attempt by compiling it with the styx compiler (via the Node
-    bridge) and feeds any errors back for correction. Returns the argtype source
-    on the first zero-error compile. Raises ``ValueError`` if it still fails to
-    compile after ``max_retries`` correction attempts. Residual warnings on a
-    successful compile are logged, not fatal. Raises ``BridgeUnavailable`` (before
-    spending any tokens) if the validation toolchain is broken.
+    Validates each attempt against the argtype parser (via the Node bridge) and
+    feeds any errors back for correction. Returns the argtype source on the
+    first zero-error result. Raises ``ValueError`` if it still fails after
+    ``max_retries`` correction attempts. Residual warnings on a successful
+    attempt are logged, not fatal. Raises ``BridgeUnavailable`` (before spending
+    any tokens) if the validation toolchain is broken.
+
+    This is a grammar gate and nothing else. Whether the styx compiler - or any
+    other consumer - can lower the result is not asked here, because feeding
+    that back would correct the Author against one consumer's current
+    capabilities rather than against argtype.
     """
     ensure_bridge()
     user_message = (
@@ -333,21 +338,21 @@ async def author_argtype(
             if result.ok:
                 if result.warnings:
                     logger.warning(
-                        f"[author:argtype] compiled with {len(result.warnings)} warning(s):\n"
+                        f"[author:argtype] resolved with {len(result.warnings)} warning(s):\n"
                         + "\n".join(f"  - {w}" for w in result.warnings)
                     )
-                logger.info(f"[author:argtype] descriptor valid ({result.n_nodes} IR nodes)")
+                logger.info(f"[author:argtype] descriptor valid ({result.n_nodes} nodes)")
                 return source
 
             diagnostics = result.errors + [f"(warning) {w}" for w in result.warnings]
             if attempt == max_retries:
                 raise ValueError(
-                    f"[author:argtype] descriptor still fails to compile after {max_retries} retries:\n"
+                    f"[author:argtype] descriptor still invalid after {max_retries} retries:\n"
                     + "\n".join(f"- {d}" for d in diagnostics)
                 )
 
             logger.warning(
-                f"[author:argtype] {len(result.errors)} compile error(s), retrying:\n"
+                f"[author:argtype] {len(result.errors)} error(s), retrying:\n"
                 + "\n".join(f"  - {d}" for d in diagnostics)
             )
             messages.append({"role": "assistant", "content": raw})
@@ -355,7 +360,7 @@ async def author_argtype(
                 {
                     "role": "user",
                     "content": (
-                        "The argtype document above failed to compile:\n\n"
+                        "The argtype document above is not valid argtype:\n\n"
                         + "\n".join(f"- {d}" for d in diagnostics)
                         + "\n\nProduce a corrected argtype document. Output only the "
                         "argtype source, no commentary."

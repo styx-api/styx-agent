@@ -3,8 +3,8 @@
   "private": true,
   "type": "module",
   "version": "0.0.0",
-  "description": "Node bridge: validate argtype via the styx compiler for styx-agent's author loop",
+  "description": "Node bridge: validate argtype against the argtype parser for styx-agent's author loop",
   "dependencies": {
-    "@styx-api/core": "0.9.0"
+    "@argtype/core": "^0.1.0"
   }
 }

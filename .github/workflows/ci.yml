@@ -19,6 +19,18 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
+      # The argtype validation tests skip themselves when the Node bridge is
+      # missing, which is what they did here for as long as this workflow has
+      # existed. `@argtype/core` is a published package with no build step - the
+      # styx compiler needed a local build, which is why this was never worth
+      # doing before - so the bridge tests can actually run now.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install argtype bridge
+        run: npm install --prefix tools/argtype_bridge
+
       - name: Ruff
         run: uv run ruff check .
 
