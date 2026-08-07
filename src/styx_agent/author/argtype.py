@@ -372,7 +372,11 @@ async def author_argtype(
     finally:
         record_agent(AgentStat(
             "author", attempts_used, time.monotonic() - start, prompt_tokens, completion_tokens,
-            model=resolve_model(model)[0],
+            # The model as *requested*, not as LiteLLM resolves it: this is the
+            # string that reproduces the run, and resolving here would make
+            # recording a stat depend on provider credentials - it raises
+            # without them, so telemetry could crash the run it is measuring.
+            model=model,
             # The author builds its history in one list and never compacts it,
             # so `messages` is already the full record.
             transcript=[dict(m) for m in messages],
