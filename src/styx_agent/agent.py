@@ -8,6 +8,7 @@ import logging
 import os
 import random
 import time
+from collections.abc import Callable
 from typing import cast
 
 import litellm
@@ -206,7 +207,11 @@ def _strip_leaked_tool_calls(content: str) -> str:
 
 
 async def _final_report(
-    label: str, call_model: str, messages: list[dict], extra_kwargs: dict
+    label: str,
+    call_model: str,
+    messages: list[dict],
+    extra_kwargs: dict,
+    remember: Callable[[dict], dict],
 ) -> tuple[str, int, int]:
     """Coax a clean prose final report, defending against leaked tool-call tokens.
 
@@ -239,8 +244,8 @@ async def _final_report(
             f"[{label}] final report leaked tool-call tokens; re-prompting "
             f"(attempt {attempt + 1})"
         )
-        messages.append(response.choices[0].message.model_dump())
-        messages.append({
+        remember(response.choices[0].message.model_dump())
+        remember({
             "role": "user",
             "content": (
                 "Your previous message contained raw tool-call tokens instead of a "
@@ -264,6 +269,22 @@ async def run_agent(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_message},
     ]
+    # The history as it happened, kept apart from `messages` on purpose.
+    #
+    # `_compact_tool_results` rewrites old tool results into stubs *in place*, so
+    # by the end `messages` no longer says what the model was actually shown on
+    # the turn that mattered - the file contents a finding was drawn from are
+    # gone. A transcript that recorded only the final state would show a stub
+    # where the evidence was, which is the opposite of what a transcript is for.
+    # Shallow copies are enough: compaction replaces the `content` string rather
+    # than mutating anything nested.
+    transcript: list[dict] = [dict(m) for m in messages]
+
+    def remember(message: dict) -> dict:
+        messages.append(message)
+        transcript.append(dict(message))
+        return message
+
     call_model, extra_kwargs = resolve_model(model)
     budget = _tool_result_budget()
     start = time.monotonic()
@@ -299,8 +320,8 @@ async def run_agent(
                     f"[{label}] turn {turn + 1}: tool-call tokens leaked into "
                     "content; nudging and continuing"
                 )
-                messages.append(message.model_dump())
-                messages.append({
+                remember(message.model_dump())
+                remember({
                     "role": "user",
                     "content": (
                         "Your previous message contained raw tool-call tokens that "
@@ -311,11 +332,12 @@ async def run_agent(
                 })
                 continue
             record_agent(AgentStat(
-                label, turn + 1, time.monotonic() - start, prompt_tokens, completion_tokens
+                label, turn + 1, time.monotonic() - start, prompt_tokens, completion_tokens,
+                model=call_model, transcript=transcript,
             ))
             return content
 
-        messages.append(message.model_dump())
+        remember(message.model_dump())
 
         for tool_call in message.tool_calls:
             fn = tool_call.function
@@ -324,7 +346,7 @@ async def run_agent(
             result = execute_tool(fn.name, args, repo_root)
             logger.debug(f"  Result: {result[:200]}...")
 
-            messages.append(
+            remember(
                 {
                     "role": "tool",
                     "tool_call_id": tool_call.id,
@@ -336,7 +358,7 @@ async def run_agent(
 
         remaining = max_turns - turn - 1
         if 0 < remaining <= TURN_WARNING_THRESHOLD:
-            messages.append(
+            remember(
                 {
                     "role": "user",
                     "content": (
@@ -353,7 +375,7 @@ async def run_agent(
     # downstream agents than a hard failure — especially on large packages where
     # exhaustive tracing legitimately exceeds the budget.
     logger.warning(f"[{label}] hit {max_turns}-turn budget; forcing best-effort final report")
-    messages.append(
+    remember(
         {
             "role": "user",
             "content": (
@@ -371,11 +393,12 @@ async def run_agent(
         }
     )
     report, fp_prompt, fp_completion = await _final_report(
-        label, call_model, messages, extra_kwargs
+        label, call_model, messages, extra_kwargs, remember
     )
     prompt_tokens += fp_prompt
     completion_tokens += fp_completion
     record_agent(AgentStat(
-        label, max_turns, time.monotonic() - start, prompt_tokens, completion_tokens
+        label, max_turns, time.monotonic() - start, prompt_tokens, completion_tokens,
+        model=call_model, transcript=transcript,
     ))
     return report

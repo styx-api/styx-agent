@@ -429,7 +429,11 @@ async def author_boutiques(
         raise RuntimeError("unreachable")
     finally:
         record_agent(AgentStat(
-            "author", attempts_used, time.monotonic() - start, prompt_tokens, completion_tokens
+            "author", attempts_used, time.monotonic() - start, prompt_tokens, completion_tokens,
+            model=resolve_model(model)[0],
+            # The author builds its history in one list and never compacts it,
+            # so `messages` is already the full record.
+            transcript=[dict(m) for m in messages],
         ))
 
 
