@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import subprocess
 import sys
 import time
 from collections import defaultdict
@@ -46,6 +47,33 @@ from styx_agent.telemetry import collect_agent_stats  # noqa: E402
 
 def _tool_key(host: dict) -> str:
     return f"{host.get('repo')}/{host.get('tool')}"
+
+
+def _git_sha(path: Path) -> str | None:
+    """HEAD of the repo containing ``path``; None when it is not a checkout."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout.strip() or None
+
+
+def _explorer_model(reports_root: Path) -> str | None:
+    """The model that wrote the frozen reports, read from any `meta.json`.
+
+    The directory name carries it by convention, but a convention is not a
+    record: reports written before run provenance existed have no meta.json at
+    all, and saying so is better than trusting a name someone typed.
+    """
+    for meta in sorted(reports_root.rglob("meta.json")):
+        try:
+            return json.loads(meta.read_text(encoding="utf-8")).get("model")
+        except (OSError, json.JSONDecodeError):
+            continue
+    return None
 
 
 async def _author_one(tool: str, reports: Path, model: str, max_retries: int) -> tuple[str | None, str | None, dict]:
@@ -80,7 +108,7 @@ async def _author_one(tool: str, reports: Path, model: str, max_retries: int) ->
     return source, error, usage
 
 
-async def _run(args: argparse.Namespace) -> int:
+async def _run(args: argparse.Namespace, model: str, out: Path) -> int:
     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
     challenges = manifest["challenges"]
 
@@ -107,7 +135,7 @@ async def _run(args: argparse.Namespace) -> int:
         host = hosts[key]
         reports = reports_root / str(host.get("repo")) / str(host.get("tool"))
         print(f"authoring {key} ({len(by_tool[key])} challenges) ...", file=sys.stderr, flush=True)
-        source, error, usage = await _author_one(host["tool"], reports, args.model, args.max_retries)
+        source, error, usage = await _author_one(host["tool"], reports, model, args.max_retries)
         total_tokens += usage.get("tokens", 0)
 
         if source is not None:
@@ -126,11 +154,23 @@ async def _run(args: argparse.Namespace) -> int:
     # types, so `"version": null` is rejected outright where an absent key is
     # fine.
     submission = {
-        "system": args.system or f"styx-agent/{args.model}",
+        "system": args.system or f"styx-agent/{model}",
         "notes": (
             f"author-only against frozen reports in {reports_root.name}; "
-            f"Author model {args.model}, max_retries {args.max_retries}"
+            f"Author model {model}, max_retries {args.max_retries}"
         ),
+        # What produced this run, so a delta between two submissions can be
+        # attributed to something. The bench stores these without interpreting
+        # them - it must not learn what a "frozen report set" is - but a score
+        # you cannot tie to a pipeline revision cannot tell you whether a change
+        # helped.
+        "provenance": {
+            "author_model": model,
+            "explorer_reports": reports_root.name,
+            "explorer_model": _explorer_model(reports_root),
+            "styx_agent_sha": _git_sha(Path(__file__).resolve().parents[1]),
+            "max_retries": args.max_retries,
+        },
         "cost": {"tokens": total_tokens},
         "answers": answers,
     }
@@ -139,7 +179,6 @@ async def _run(args: argparse.Namespace) -> int:
     if args.run is not None:
         submission["run"] = args.run
 
-    out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(submission, indent=2) + "\n", encoding="utf-8")
 
@@ -152,22 +191,51 @@ async def _run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _slug(model: str) -> str:
+    """A filename for a model string: `neurodesk/glm-5.2` -> `glm-5.2`."""
+    tail = model.rsplit("/", 1)[-1]
+    return "".join(c if c.isalnum() or c in "-_." else "_" for c in tail) or "model"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--manifest", required=True, help="from `styx-bench list --json FILE`")
     parser.add_argument("--reports", required=True, help="frozen report root: <dir>/<package>/<tool>/{interface,outputs}.md")
-    parser.add_argument("--out", required=True, help="where to write the submission JSON")
+    parser.add_argument("--out", default=None, help="submission path (single model)")
+    parser.add_argument("--out-dir", default=None, help="directory for one submission per model (sweep)")
     parser.add_argument("--model", default=None, help="Author model (default: the agent's own default)")
+    parser.add_argument(
+        "--models", default=None,
+        help="comma-separated Author models to sweep; one submission each, written to --out-dir",
+    )
     parser.add_argument("--system", default=None, help="submission `system` name (default: styx-agent/<model>)")
     parser.add_argument("--version", default=None, help="submission `version`")
     parser.add_argument("--run", type=int, default=None, help="repeat index; design asks for n >= 3")
     parser.add_argument("--max-retries", type=int, default=3)
     args = parser.parse_args()
 
-    if args.model is None:
-        from styx_agent.agent import DEFAULT_MODEL
+    if args.models and args.model:
+        parser.error("use --model or --models, not both")
+    if args.models and not args.out_dir:
+        parser.error("--models writes one submission per model, so it needs --out-dir")
+    if not args.models and not args.out:
+        parser.error("--out is required for a single model (or use --models with --out-dir)")
+    if args.models and args.system:
+        # One name across a sweep would make every submission claim to be the
+        # same system, and the bench pairs runs by that name.
+        parser.error("--system names a single system; it cannot be shared across --models")
 
-        args.model = DEFAULT_MODEL
+    if args.models:
+        models = [m.strip() for m in args.models.split(",") if m.strip()]
+        if not models:
+            parser.error("--models is empty")
+    else:
+        model = args.model
+        if model is None:
+            from styx_agent.agent import DEFAULT_MODEL
+
+            model = DEFAULT_MODEL
+        models = [model]
 
     try:
         # Fail before spending tokens if the validation bridge is broken.
@@ -176,7 +244,24 @@ def main() -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
-    return asyncio.run(_run(args))
+    failures = 0
+    for i, model in enumerate(models, 1):
+        out = Path(args.out) if args.out else Path(args.out_dir) / f"{_slug(model)}.json"
+        if len(models) > 1:
+            print(f"\n=== [{i}/{len(models)}] {model} -> {out} ===", file=sys.stderr, flush=True)
+        try:
+            asyncio.run(_run(args, model, out))
+        except Exception as e:  # noqa: BLE001 - one model failing must not end the sweep
+            failures += 1
+            print(f"error: {model} failed: {type(e).__name__}: {e}", file=sys.stderr)
+
+    if len(models) > 1:
+        print(
+            f"\nswept {len(models)} model(s), {failures} failed; "
+            f"compare with: styx-bench compare {args.out_dir}/*.json",
+            file=sys.stderr,
+        )
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
