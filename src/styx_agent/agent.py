@@ -13,7 +13,7 @@ from typing import cast
 
 import litellm
 
-from styx_agent.telemetry import AgentStat, record_agent
+from styx_agent.telemetry import AgentStat, count_retries, record_agent, record_retry
 from styx_agent.tools.filesystem import TOOL_DEFINITIONS, execute_tool
 
 logger = logging.getLogger(__name__)
@@ -134,6 +134,7 @@ async def _acompletion(label: str, **kwargs) -> litellm.ModelResponse:
             logger.warning(
                 f"[{label}] {type(e).__name__}; backing off {wait:.0f}s (attempt {attempt})"
             )
+            record_retry()
             await asyncio.sleep(wait)
 
 
@@ -264,7 +265,28 @@ async def run_agent(
     label: str = "agent",
     max_turns: int = MAX_TURNS,
 ) -> str:
-    """Run an LLM agent loop with filesystem tools until the model stops calling tools."""
+    """Run an LLM agent loop with filesystem tools until the model stops calling tools.
+
+    A wrapper only, so the retry counter is scoped to exactly one agent run and
+    is reset however the run ends. Concurrent agents run as separate Tasks with
+    their own context copies, so they count their own retries; sequential ones
+    each install a fresh counter.
+    """
+    with count_retries() as retries:
+        return await _run_agent(
+            system_prompt, user_message, repo_root, model, label, max_turns, retries
+        )
+
+
+async def _run_agent(
+    system_prompt: str,
+    user_message: str,
+    repo_root: str,
+    model: str,
+    label: str,
+    max_turns: int,
+    retries: list[int],
+) -> str:
     messages: list[dict] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_message},
@@ -333,7 +355,7 @@ async def run_agent(
                 continue
             record_agent(AgentStat(
                 label, turn + 1, time.monotonic() - start, prompt_tokens, completion_tokens,
-                model=model, transcript=transcript,
+                model=model, retries=retries[0], transcript=transcript,
             ))
             return content
 
@@ -399,6 +421,6 @@ async def run_agent(
     completion_tokens += fp_completion
     record_agent(AgentStat(
         label, max_turns, time.monotonic() - start, prompt_tokens, completion_tokens,
-        model=model, transcript=transcript,
+        model=model, retries=retries[0], transcript=transcript,
     ))
     return report

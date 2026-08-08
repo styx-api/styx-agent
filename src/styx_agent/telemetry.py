@@ -30,6 +30,13 @@ class AgentStat:
     #: is otherwise only labelled by whatever the operator typed, so a
     #: mislabelled one is undetectable after the fact.
     model: str = ""
+    #: Transient failures retried inside this run.
+    #:
+    #: A run that spent forty minutes backing off against a struggling endpoint
+    #: is indistinguishable from a slow one - same tokens, same turns, just more
+    #: seconds - unless it says so. Both are legitimate; only one means anything
+    #: about the model.
+    retries: int = 0
     #: Every message in the conversation, in order, as it happened.
     #:
     #: Deliberately not part of `to_dict()`: aggregates go into `run.json`,
@@ -47,6 +54,7 @@ class AgentStat:
             "label": self.label,
             "model": self.model,
             "turns": self.turns,
+            "retries": self.retries,
             "seconds": round(self.seconds, 2),
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
@@ -58,6 +66,33 @@ class AgentStat:
 _sink: contextvars.ContextVar[list[AgentStat] | None] = contextvars.ContextVar(
     "styx_agent_stat_sink", default=None
 )
+
+#: Retries for the agent run currently in progress. A separate contextvar from
+#: the stat sink because their scopes differ: the sink spans a whole
+#: orchestration (many agents), while this is per agent run. Under
+#: ``asyncio.gather`` each agent is its own Task with its own context copy, so
+#: concurrent agents count their own retries and not each other's.
+_retries: contextvars.ContextVar[list[int] | None] = contextvars.ContextVar(
+    "styx_agent_retry_counter", default=None
+)
+
+
+def record_retry() -> None:
+    """Count one transient failure against the agent run in progress."""
+    box = _retries.get()
+    if box is not None:
+        box[0] += 1
+
+
+@contextmanager
+def count_retries() -> Iterator[list[int]]:
+    """Count retries within this scope. The single-element list is the counter."""
+    box = [0]
+    token = _retries.set(box)
+    try:
+        yield box
+    finally:
+        _retries.reset(token)
 
 
 def record_agent(stat: AgentStat) -> None:

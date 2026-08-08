@@ -11,8 +11,16 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from styx_agent.agent import _compact_tool_results
-from styx_agent.telemetry import AgentStat, collect_agent_stats, record_agent, write_transcripts
+from styx_agent.telemetry import (
+    AgentStat,
+    collect_agent_stats,
+    count_retries,
+    record_agent,
+    write_transcripts,
+)
 
 
 def _stat(label: str = "interface", **over) -> AgentStat:
@@ -124,6 +132,67 @@ def test_recording_a_stat_never_needs_provider_credentials(monkeypatch):
     assert len(stats) == 1
     # The requested string is what reproduces the run, so that is what is kept.
     assert stats[0].model == "neurodesk/glm-5.2"
+
+
+def test_retries_are_counted_against_the_run_that_incurred_them(monkeypatch):
+    """A run that spent its wall-clock backing off must say so.
+
+    Without this, a forty-minute retry storm and a slow model are the same row:
+    same tokens, same turns, more seconds. Only one of them says anything about
+    the model.
+    """
+    import asyncio
+
+    import litellm
+
+    from styx_agent import agent as agent_mod
+
+    calls = {"n": 0}
+
+    async def flaky(**kwargs):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise litellm.exceptions.Timeout(
+                message="hung", model=kwargs.get("model", "m"), llm_provider="test"
+            )
+        return "ok"
+
+    monkeypatch.setattr(agent_mod.litellm, "acompletion", flaky)
+    # `agent_mod.asyncio` is the asyncio module itself, so the real sleep has to
+    # be captured before it is replaced - otherwise the stand-in calls itself.
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(agent_mod.asyncio, "sleep", lambda _s: real_sleep(0))
+
+    with count_retries() as retries:
+        asyncio.run(agent_mod._acompletion("test"))
+    assert retries[0] == 2, "two transient failures, two retries"
+    assert calls["n"] == 3
+
+
+def test_retries_are_not_counted_outside_a_scope(monkeypatch):
+    """Same no-op rule as the stat sink: recording must never require a scope."""
+    from styx_agent.telemetry import record_retry
+
+    record_retry()  # must not raise
+
+
+def test_a_failure_that_is_not_retryable_is_not_counted(monkeypatch):
+    import asyncio
+
+    import litellm
+
+    from styx_agent import agent as agent_mod
+
+    async def refuse(**kwargs):
+        raise litellm.exceptions.AuthenticationError(
+            message="nope", model="m", llm_provider="test"
+        )
+
+    monkeypatch.setattr(agent_mod.litellm, "acompletion", refuse)
+    with count_retries() as retries:
+        with pytest.raises(litellm.exceptions.AuthenticationError):
+            asyncio.run(agent_mod._acompletion("test"))
+    assert retries[0] == 0
 
 
 def test_stats_are_still_a_no_op_outside_a_collection_scope():

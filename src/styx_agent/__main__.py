@@ -127,6 +127,9 @@ def _recorded(dest: Path, args: argparse.Namespace, repo: str | None = None):
                 "started_at": started_at,
                 "seconds": round(time.monotonic() - started, 2),
                 "turns": sum(s.turns for s in stats),
+                # A run that spent forty minutes backing off looks exactly like
+                # a slow one - same tokens, same turns - unless it says so.
+                "retries": sum(s.retries for s in stats),
                 "prompt_tokens": sum(s.prompt_tokens for s in stats),
                 "completion_tokens": sum(s.completion_tokens for s in stats),
                 "tokens": sum(s.total_tokens for s in stats),
@@ -139,7 +142,7 @@ def _recorded(dest: Path, args: argparse.Namespace, repo: str | None = None):
             written = write_transcripts(stats, dest)
             print(
                 f"Wrote {dest / 'meta.json'} ({meta['tokens']} tokens, {meta['turns']} turns, "
-                f"{meta['seconds']}s, {len(written)} transcript(s))",
+                f"{meta['retries']} retries, {meta['seconds']}s, {len(written)} transcript(s))",
                 file=sys.stderr,
             )
 

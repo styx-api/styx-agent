@@ -9,7 +9,7 @@ import time
 
 from styx_agent.agent import DEFAULT_MODEL, _acompletion, _add_usage, resolve_model
 from styx_agent.author.validator import SCHEMA_VERSION, validate
-from styx_agent.telemetry import AgentStat, record_agent
+from styx_agent.telemetry import AgentStat, count_retries, record_agent
 
 logger = logging.getLogger(__name__)
 
@@ -376,6 +376,13 @@ async def author_boutiques(
     start = time.monotonic()
     prompt_tokens = completion_tokens = 0
     attempts_used = 0
+    # Distinct from `attempts_used`: that counts author attempts against a
+    # rejected descriptor, this counts transport failures retried underneath.
+    # Entered by hand rather than with a `with` so the existing try/finally does
+    # not have to be reindented around it; the counter outlives the scope, so
+    # the `finally` can still read it after resetting the contextvar.
+    retry_scope = count_retries()
+    retries = retry_scope.__enter__()
     try:
         for attempt in range(max_retries + 1):
             attempts_used = attempt + 1
@@ -428,6 +435,7 @@ async def author_boutiques(
 
         raise RuntimeError("unreachable")
     finally:
+        retry_scope.__exit__(None, None, None)
         record_agent(AgentStat(
             "author", attempts_used, time.monotonic() - start, prompt_tokens, completion_tokens,
             # The model as *requested*, not as LiteLLM resolves it: this is the
@@ -435,6 +443,7 @@ async def author_boutiques(
             # recording a stat depend on provider credentials - it raises
             # without them, so telemetry could crash the run it is measuring.
             model=model,
+            retries=retries[0],
             # The author builds its history in one list and never compacts it,
             # so `messages` is already the full record.
             transcript=[dict(m) for m in messages],
