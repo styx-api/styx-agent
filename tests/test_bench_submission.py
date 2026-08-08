@@ -64,10 +64,12 @@ def _args(manifest, reports, out, **over):
 
 
 def _run(args) -> dict:
+    """Drive one model, the way the sweep does for each of its models."""
     import asyncio
 
-    assert asyncio.run(bench_submission._run(args)) == 0
-    return json.loads(Path(args.out).read_text(encoding="utf-8"))
+    out = Path(args.out)
+    assert asyncio.run(bench_submission._run(args, args.model, out)) == 0
+    return json.loads(out.read_text(encoding="utf-8"))
 
 
 def test_authors_once_per_tool_and_shares_the_document(workspace, monkeypatch):
@@ -127,6 +129,65 @@ def test_missing_frozen_reports_abstain_with_a_reason(workspace, monkeypatch, tm
     monkeypatch.setattr(bench_submission, "author_argtype", fake_author)
     sub = _run(_args(manifest, tmp_path / "absent", out))
     assert all("no frozen report" in a["error"] for a in sub["answers"].values())
+
+
+def test_slug_names_a_file_after_the_model():
+    assert bench_submission._slug("neurodesk/glm-5.2") == "glm-5.2"
+    assert bench_submission._slug("litellm_proxy/bedrock/us.anthropic.claude-sonnet-4-6") == (
+        "us.anthropic.claude-sonnet-4-6"
+    )
+    assert bench_submission._slug("weird/name with spaces") == "name_with_spaces"
+
+
+def test_sweep_writes_one_submission_per_model(workspace, monkeypatch, tmp_path):
+    """`--models` is the whole point of the sweep: one command, N submissions."""
+    manifest, reports, _out = workspace
+    seen: list[str] = []
+
+    async def fake_author(tool, iface, outs, model, max_retries):
+        seen.append(model)
+        return f"{tool}: seq(a: path)"
+
+    monkeypatch.setattr(bench_submission, "author_argtype", fake_author)
+    monkeypatch.setattr(bench_submission, "ensure_bridge", lambda: None)
+    out_dir = tmp_path / "subs"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["bench_submission.py", "--manifest", str(manifest), "--reports", str(reports),
+         "--models", "neurodesk/glm-5.2,neurodesk/qwen3", "--out-dir", str(out_dir)],
+    )
+    assert bench_submission.main() == 0
+
+    written = sorted(p.name for p in out_dir.glob("*.json"))
+    assert written == ["glm-5.2.json", "qwen3.json"]
+    # Each submission names its own model, or the bench cannot pair the runs.
+    systems = [json.loads((out_dir / n).read_text(encoding="utf-8"))["system"] for n in written]
+    assert systems == ["styx-agent/neurodesk/glm-5.2", "styx-agent/neurodesk/qwen3"]
+    assert set(seen) == {"neurodesk/glm-5.2", "neurodesk/qwen3"}
+
+
+def test_one_model_failing_does_not_end_the_sweep(workspace, monkeypatch, tmp_path):
+    manifest, reports, _out = workspace
+
+    async def fake_author(tool, iface, outs, model, max_retries):
+        if model.endswith("qwen3"):
+            raise RuntimeError("gateway said no")
+        return f"{tool}: seq(a: path)"
+
+    monkeypatch.setattr(bench_submission, "author_argtype", fake_author)
+    monkeypatch.setattr(bench_submission, "ensure_bridge", lambda: None)
+    out_dir = tmp_path / "subs"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["bench_submission.py", "--manifest", str(manifest), "--reports", str(reports),
+         "--models", "neurodesk/qwen3,neurodesk/glm-5.2", "--out-dir", str(out_dir)],
+    )
+    # A per-model failure is caught inside `_author_one` and recorded as an
+    # abstention, so the sweep still writes both files and exits clean.
+    assert bench_submission.main() == 0
+    assert sorted(p.name for p in out_dir.glob("*.json")) == ["glm-5.2.json", "qwen3.json"]
+    failed = json.loads((out_dir / "qwen3.json").read_text(encoding="utf-8"))
+    assert all("error" in a for a in failed["answers"].values())
 
 
 def test_system_defaults_to_the_author_model(workspace, monkeypatch):
